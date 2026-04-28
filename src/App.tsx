@@ -31,6 +31,13 @@ import type { AgentTraceEntry, AppPresence, ChatMessage, SafetyLevel } from "./t
 
 const THINKING_MS = 1400;
 const DEMO_MESSAGE = "I feel overwhelmed and I can’t start my assignment.";
+const AGENT_SEQUENCE: AgentTraceEntry[] = [
+  { agent: "Listener Agent", output: "Reading your message and identifying emotion + intent..." },
+  { agent: "Coach Agent", output: "Preparing practical, non-medical next steps..." },
+  { agent: "Safety Agent", output: "Running safety scan for crisis or risk language..." },
+  { agent: "Summary Agent", output: "Summarizing conversation state for the demo trace..." },
+  { agent: "Speaker Agent", output: "Crafting a warm, short response for voice output..." },
+];
 
 type WebkitWindow = Window & {
   SpeechRecognition?: {
@@ -156,33 +163,115 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [agentTrace, setAgentTrace] = useState<AgentTraceEntry[]>([]);
+  const [thinkingTrace, setThinkingTrace] = useState<AgentTraceEntry[]>([]);
   const [safetyLevel, setSafetyLevel] = useState<SafetyLevel | null>(null);
   const [mockMode, setMockMode] = useState(false);
   const [voiceReplyOn, setVoiceReplyOn] = useState(true);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [isSpeakingOut, setIsSpeakingOut] = useState(false);
   const exchangeLock = useRef(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const traceTimerRef = useRef<number | null>(null);
+  const stopThinkingTrace = useCallback(() => {
+    if (traceTimerRef.current !== null) {
+      window.clearInterval(traceTimerRef.current);
+      traceTimerRef.current = null;
+    }
+  }, []);
+
+  const startThinkingTrace = useCallback(() => {
+    stopThinkingTrace();
+    setThinkingTrace(
+      AGENT_SEQUENCE.map((step, idx) => ({
+        agent: step.agent,
+        output: idx === 0 ? step.output : "Waiting for previous agent...",
+      })),
+    );
+    let stepIndex = 1;
+    traceTimerRef.current = window.setInterval(() => {
+      setThinkingTrace((prev) =>
+        prev.map((item, idx) => {
+          if (idx < stepIndex) return { ...item, output: `${AGENT_SEQUENCE[idx].output} Done.` };
+          if (idx === stepIndex) return { ...item, output: AGENT_SEQUENCE[idx].output };
+          return item;
+        }),
+      );
+      stepIndex += 1;
+      if (stepIndex >= AGENT_SEQUENCE.length) {
+        stopThinkingTrace();
+      }
+    }, 700);
+  }, [stopThinkingTrace]);
+
+
+  const getPreferredVoice = useCallback(
+    (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined => {
+      if (selectedVoiceName) {
+        const explicit = voices.find((v) => v.name === selectedVoiceName);
+        if (explicit) return explicit;
+      }
+
+      // Prefer natural-sounding English voices when available.
+      const preferredPatterns = [
+        /natural/i,
+        /neural/i,
+        /samantha/i,
+        /ava/i,
+        /alloy/i,
+        /google.*en/i,
+        /microsoft.*aria/i,
+        /microsoft.*jenny/i,
+      ];
+
+      for (const pattern of preferredPatterns) {
+        const match = voices.find((v) => /^en[-_]/i.test(v.lang) && pattern.test(v.name));
+        if (match) return match;
+      }
+
+      return voices.find((v) => /^en[-_]/i.test(v.lang)) ?? voices[0];
+    },
+    [selectedVoiceName],
+  );
 
   const stopSpeaking = useCallback(() => {
     window.speechSynthesis.cancel();
     setIsSpeakingOut(false);
+    setPresence((p) => (p === "speaking" ? "idle" : p));
   }, []);
 
   const speakText = useCallback(
-    (text: string) => {
-      if (!voiceReplyOn || !("speechSynthesis" in window)) return;
-      stopSpeaking();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.95;
-      utterance.pitch = 1;
-      utterance.onstart = () => setIsSpeakingOut(true);
-      utterance.onend = () => setIsSpeakingOut(false);
-      utterance.onerror = () => setIsSpeakingOut(false);
-      window.speechSynthesis.speak(utterance);
-    },
-    [stopSpeaking, voiceReplyOn],
+    (text: string) =>
+      new Promise<void>((resolve) => {
+        if (!voiceReplyOn || !("speechSynthesis" in window)) {
+          resolve();
+          return;
+        }
+
+        stopSpeaking();
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voices = window.speechSynthesis.getVoices();
+        const bestVoice = getPreferredVoice(voices);
+        if (bestVoice) utterance.voice = bestVoice;
+        utterance.rate = 0.92;
+        utterance.pitch = 1.02;
+        utterance.onstart = () => {
+          setIsSpeakingOut(true);
+          setPresence("speaking");
+        };
+        utterance.onend = () => {
+          setIsSpeakingOut(false);
+          resolve();
+        };
+        utterance.onerror = () => {
+          setIsSpeakingOut(false);
+          resolve();
+        };
+        window.speechSynthesis.speak(utterance);
+      }),
+    [getPreferredVoice, stopSpeaking, voiceReplyOn],
   );
 
   const canUseSpeechRecognition = useMemo(() => {
@@ -224,11 +313,30 @@ export default function App() {
   }, [isListening]);
 
   useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+    const synth = window.speechSynthesis;
+    const loadVoices = () => {
+      const voices = synth.getVoices();
+      setAvailableVoices(voices);
+      if (!selectedVoiceName) {
+        const preferred = getPreferredVoice(voices);
+        if (preferred) setSelectedVoiceName(preferred.name);
+      }
+    };
+    loadVoices();
+    synth.onvoiceschanged = loadVoices;
     return () => {
+      synth.onvoiceschanged = null;
+    };
+  }, [getPreferredVoice, selectedVoiceName]);
+
+  useEffect(() => {
+    return () => {
+      stopThinkingTrace();
       recognitionRef.current?.stop();
       window.speechSynthesis.cancel();
     };
-  }, []);
+  }, [stopThinkingTrace]);
 
   const processExchange = useCallback(async (userText: string, mode = "general") => {
     const trimmed = userText.trim();
@@ -240,6 +348,7 @@ export default function App() {
       ...m,
       { id: createId(), role: "user", text: trimmed },
     ]);
+    startThinkingTrace();
 
     try {
       await new Promise((r) => setTimeout(r, THINKING_MS));
@@ -251,17 +360,17 @@ export default function App() {
       });
       const reply = result.finalResponse;
       setAgentTrace(result.agentTrace);
+      setThinkingTrace([]);
       setSafetyLevel(result.safetyLevel);
       setMockMode(result.mockMode);
       setMessages((m) => [
         ...m,
         { id: createId(), role: "assistant", text: reply },
       ]);
-      setPresence("speaking");
-      speakText(reply);
-      await new Promise((r) => setTimeout(r, Math.min(4600, Math.max(1200, reply.length * 34))));
+      await speakText(reply);
       setPresence("idle");
     } catch (error) {
+      setThinkingTrace([]);
       setMockMode(false);
       const errorMessage =
         error instanceof Error ? error.message : "The assistant is temporarily unavailable.";
@@ -271,9 +380,10 @@ export default function App() {
       ]);
       setPresence("idle");
     } finally {
+      stopThinkingTrace();
       exchangeLock.current = false;
     }
-  }, [messages, speakText]);
+  }, [messages, speakText, startThinkingTrace, stopThinkingTrace]);
 
   const handleSend = useCallback(() => {
     const t = input.trim();
@@ -359,9 +469,10 @@ export default function App() {
             type="button"
             onClick={handleDemo}
             disabled={busy}
-            className="rounded-full border border-stone/80 bg-white/75 px-4 py-1.5 text-xs font-medium text-bark transition hover:bg-white disabled:opacity-50"
+            title="Run classroom demo scenario"
+            className="self-end rounded-full border border-stone/60 bg-white/55 px-3 py-1 text-[0.65rem] font-medium uppercase tracking-wide text-bark/70 transition hover:bg-white/75 hover:text-bark disabled:opacity-40"
           >
-            Demo scenario
+            Demo
           </button>
           <div className="relative w-[min(100%,340px)] max-w-[min(94vw,380px)]">
             <div
@@ -419,7 +530,12 @@ export default function App() {
           <Waveform presence={presence} />
 
           <Transcript messages={messages} />
-          <AgentTracePanel trace={agentTrace} safetyLevel={safetyLevel} />
+          <AgentTracePanel
+            trace={agentTrace}
+            thinkingTrace={thinkingTrace}
+            isThinking={presence === "listening"}
+            safetyLevel={safetyLevel}
+          />
 
           <div className="flex w-full max-w-xl items-center justify-between gap-3">
             <button
@@ -439,6 +555,28 @@ export default function App() {
               <Square className="h-3.5 w-3.5" />
               Stop speaking
             </button>
+          </div>
+          <div className="w-full max-w-xl">
+            <label className="mb-1 block text-[0.68rem] uppercase tracking-wide text-bark/65">
+              Voice style
+            </label>
+            <select
+              value={selectedVoiceName}
+              onChange={(e) => setSelectedVoiceName(e.target.value)}
+              className="w-full rounded-xl border border-stone/70 bg-white/70 px-3 py-2 text-xs text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
+            >
+              {availableVoices.length === 0 ? (
+                <option value="">Default browser voice</option>
+              ) : (
+                availableVoices
+                  .filter((v) => /^en[-_]/i.test(v.lang))
+                  .map((voice) => (
+                    <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
+                      {voice.name} ({voice.lang})
+                    </option>
+                  ))
+              )}
+            </select>
           </div>
           {voiceError ? <p className="w-full max-w-xl text-xs text-rose-700">{voiceError}</p> : null}
           {!canUseSpeechRecognition ? (

@@ -21,7 +21,7 @@ export function Transcript({ messages }: TranscriptProps) {
         <AnimatePresence initial={false}>
           {recent.length === 0 ? (
             <li className="rounded-2xl bg-linen/60 px-4 py-6 text-center text-sm leading-relaxed text-bark/60">
-              Share a thought or tap a mood — your thread will grow here, gently.
+              Share a thought
             </li>
           ) : (
             recent.map((m) =>

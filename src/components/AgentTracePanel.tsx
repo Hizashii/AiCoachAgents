@@ -1,15 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bot, ChevronDown, ShieldAlert } from "lucide-react";
 import type { AgentTraceEntry, SafetyLevel } from "../types";
 
 type AgentTracePanelProps = {
   trace: AgentTraceEntry[];
+  thinkingTrace: AgentTraceEntry[];
+  isThinking: boolean;
   safetyLevel: SafetyLevel | null;
 };
 
-export function AgentTracePanel({ trace, safetyLevel }: AgentTracePanelProps) {
+export function AgentTracePanel({ trace, thinkingTrace, isThinking, safetyLevel }: AgentTracePanelProps) {
   const [open, setOpen] = useState(false);
-  const hasTrace = trace.length > 0;
+  const displayTrace = isThinking ? thinkingTrace : trace;
+  const hasTrace = displayTrace.length > 0;
+
+  useEffect(() => {
+    if (isThinking) setOpen(true);
+  }, [isThinking]);
 
   return (
     <div className="w-full max-w-xl rounded-2xl border border-stone/70 bg-white/70 px-4 py-3 shadow-soft ring-1 ring-white/70 backdrop-blur-md">
@@ -35,12 +42,18 @@ export function AgentTracePanel({ trace, safetyLevel }: AgentTracePanelProps) {
           {!hasTrace ? (
             <p className="text-sm text-bark/60">No agent trace yet. Send a message to see the pipeline.</p>
           ) : (
-            trace.map((step) => (
+            displayTrace.map((step) => (
               <div key={step.agent} className="rounded-xl bg-cream/80 px-3 py-2">
                 <p className="text-[0.72rem] font-semibold uppercase tracking-wide text-sageDeep">
                   {step.agent}
                 </p>
-                <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-bark">{step.output}</p>
+                <p
+                  className={`mt-1 whitespace-pre-wrap text-sm leading-relaxed ${
+                    isThinking ? "text-bark/80 animate-pulse" : "text-bark"
+                  }`}
+                >
+                  {step.output}
+                </p>
               </div>
             ))
           )}
