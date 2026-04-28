@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Bot, ChevronDown, ShieldAlert } from "lucide-react";
 import type { AgentTraceEntry, SafetyLevel } from "../types";
 
@@ -13,10 +13,6 @@ export function AgentTracePanel({ trace, thinkingTrace, isThinking, safetyLevel 
   const [open, setOpen] = useState(false);
   const displayTrace = isThinking ? thinkingTrace : trace;
   const hasTrace = displayTrace.length > 0;
-
-  useEffect(() => {
-    if (isThinking) setOpen(true);
-  }, [isThinking]);
 
   return (
     <div className="w-full max-w-xl rounded-2xl border border-stone/70 bg-white/70 px-4 py-3 shadow-soft ring-1 ring-white/70 backdrop-blur-md">
