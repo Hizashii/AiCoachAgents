@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply min-h-full;
+  }
+  body {
+    @apply font-sans text-earth antialiased;
+    @apply bg-parchment;
+  }
+}
+
+@layer components {
+  /* Inline avatar: breathe (idle / thinking), head motion + mouth when .talking / .is-speaking */
+  .avatar-wrap .avatar {
+    display: flex;
+    height: 100%;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    transform-origin: center center;
+  }
+
+  .avatar-wrap .avatar:not(.talking) {
+    animation: avatar-breathe 6s ease-in-out infinite;
+  }
+
+  .avatar-wrap .avatar.talking {
+    animation: avatar-speak-head 1.2s ease-in-out infinite;
+  }
+
+  .avatar-wrap .avatar-svg.is-speaking #mouth,
+  .avatar-wrap .avatar-svg.is-speaking .avatar-mouth-overlay {
+    transform-box: fill-box;
+    transform-origin: 50% 75%;
+    animation: avatar-mouth-talk 0.25s ease-in-out infinite alternate;
+  }
+
+  .avatar-wrap .avatar-svg.is-speaking .avatar-brow-line {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    animation: avatar-brow-bounce 0.28s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes avatar-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+@keyframes avatar-speak-head {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes avatar-mouth-talk {
+  from {
+    transform: scaleY(1);
+  }
+  to {
+    transform: scaleY(0.72);
+  }
+}
+
+@keyframes avatar-brow-bounce {
+  from {
+    transform: translateY(-1px);
+  }
+  to {
+    transform: translateY(2px);
+  }
+}
+
+@layer utilities {
+  .wellness-room-base {
+    background-color: #f0ebe3;
+    background-image:
+      radial-gradient(ellipse 140% 90% at 50% -25%, rgba(191, 210, 188, 0.55), transparent 58%),
+      radial-gradient(ellipse 100% 70% at 110% 20%, rgba(232, 223, 210, 0.85), transparent 52%),
+      radial-gradient(ellipse 85% 55% at -15% 75%, rgba(200, 214, 196, 0.4), transparent 48%),
+      radial-gradient(ellipse 60% 45% at 80% 95%, rgba(217, 207, 194, 0.5), transparent 50%);
+  }
+
+  /* Soft organic light — suggests leaves / window light without literal clipart */
+  .leaf-light-overlay {
+    background-image: repeating-radial-gradient(
+      circle at 20% 30%,
+      transparent 0,
+      transparent 48px,
+      rgba(255, 252, 248, 0.04) 48px,
+      rgba(255, 252, 248, 0.04) 49px
+    );
+    opacity: 0.85;
+  }
+}
