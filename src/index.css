@@ -12,6 +12,43 @@
     @apply font-sans text-earth antialiased;
     @apply bg-parchment;
   }
+
+  /* Adaptive safety/mood theme. The whole cockpit reads these variables, so the
+     interface visibly calms down as the AI raises the safety level. */
+  [data-safety] {
+    --glow-strength: 1;
+    --motion-speed: 1;
+    --accent: 93 111 92; /* sageDeep */
+    --accent-soft: 200 214 196; /* mist */
+    transition: filter 0.8s ease, background-color 0.8s ease;
+  }
+
+  [data-safety="sensitive"] {
+    --glow-strength: 0.6;
+    --motion-speed: 0.75;
+    --accent: 150 130 86; /* warmer amber-earth */
+    --accent-soft: 229 221 208;
+    filter: saturate(0.92);
+  }
+
+  [data-safety="crisis"] {
+    --glow-strength: 0.2;
+    --motion-speed: 0.45;
+    --accent: 120 86 78; /* calm serious clay */
+    --accent-soft: 224 208 200;
+    filter: saturate(0.82) contrast(0.98);
+  }
+
+  /* Honor reduced-motion preferences for accessibility. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
 }
 
 @layer components {
@@ -82,6 +119,23 @@
   }
   to {
     transform: translateY(2px);
+  }
+}
+
+@layer components {
+  /* Premium frosted glass panel — the core surface of the cockpit. */
+  .glass-panel {
+    @apply rounded-3xl border border-white/60 bg-white/55 shadow-glass ring-1 ring-white/50 backdrop-blur-xl;
+  }
+
+  .glass-panel-tight {
+    @apply rounded-2xl border border-stone/60 bg-white/60 shadow-soft ring-1 ring-white/50 backdrop-blur-md;
+  }
+
+  /* A soft accent halo that follows the adaptive safety variables. */
+  .accent-glow {
+    box-shadow: 0 0 calc(40px * var(--glow-strength, 1))
+      rgba(var(--accent), calc(0.22 * var(--glow-strength, 1)));
   }
 }
 

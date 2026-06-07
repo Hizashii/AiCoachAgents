@@ -4,6 +4,16 @@ Ethereal Wellness is a React + Vite + TypeScript frontend with a local Node/Expr
 
 The existing UI is preserved. This update wires it to a real backend, adds voice input/output, and shows a visible multi-agent trace.
 
+## What's new in this version (exam additions)
+
+These five features were added on top of the original chat prototype. They combine a second course technology (**WebSockets**) with deeper **agentic AI**:
+
+1. **Live agent streaming over WebSockets** — instead of a fake "thinking" animation, each agent (`Listener → Coach → Safety → Planner → Summary → Speaker`) is streamed to the browser the moment the backend finishes it, over `ws://…/ws/agent-chat`. Falls back to plain HTTP automatically if the socket can't open. See `server/src/index.ts`, `src/api.ts` (`sendAgentChatStream`).
+2. **Action Plan generator (Planner Agent)** — a new agent turns the advice into 2–4 tiny, time-boxed steps returned as JSON. Shown as a checklist (`src/components/ActionPlanPanel.tsx`).
+3. **Mood memory + dashboard** — every exchange is saved to `localStorage` so the app shows patterns over time (`src/storage.ts`, `src/components/MoodDashboard.tsx`).
+4. **Assignment context / RAG-lite** — paste an assignment brief; it's injected into every agent's prompt so advice is grounded in the real task (the **Context** button; `studyContext` threaded through the request and `buildUserContextBlock`).
+5. **Multi-agent debate mode** — toggle **Debate** to run a `Productivity Agent` and a `Wellness Agent`, then a `Judge Agent` synthesizes the best combined direction, which feeds the Speaker (`server/src/agentPipeline.ts`).
+
 ## Safety
 
 This app is a wellness/study/productivity reflection companion.
@@ -15,12 +25,15 @@ It is **not** a therapist and does not provide medical advice.
 - Frontend: React + Vite + TypeScript
 - Backend: Node.js + Express + TypeScript runtime (`tsx`)
 - Local model: Ollama (`llama3.2:3b` by default)
-- Agent pipeline:
+- Agent pipeline (normal mode):
   - Listener Agent
   - Coach Agent
-  - Safety Agent
+  - Safety Agent (deterministic — the LLM never decides safety)
+  - Planner Agent
   - Summary Agent
   - Speaker Agent
+- Debate mode swaps the Coach for: Productivity Agent + Wellness Agent → Judge Agent
+- Live streaming: agents are pushed to the browser over a WebSocket as each one finishes
 
 ## 1) Install dependencies
 
@@ -110,8 +123,24 @@ Response body:
     { "agent": "Speaker Agent", "output": "string" }
   ],
   "safetyLevel": "normal",
-  "mockMode": false
+  "mockMode": false,
+  "actionPlan": [
+    { "title": "Open the assignment document", "minutes": 2, "reason": "..." }
+  ]
 }
+```
+
+Optional request fields: `studyContext` (assignment/project context) and `mode: "debate"` (multi-agent debate).
+
+### `ws://…/ws/agent-chat` (WebSocket)
+
+Send the same JSON payload as the POST endpoint. The server streams:
+
+```jsonc
+{ "type": "status",     "message": "Starting agent pipeline..." }
+{ "type": "agent-step", "step": { "agent": "Listener Agent", "output": "..." } } // one per agent, live
+{ "type": "final",      "result": { /* full AgentChatResponse */ } }
+{ "type": "error",      "error": "..." }
 ```
 
 ## Demo Flow (for class)

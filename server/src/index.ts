@@ -1,8 +1,10 @@
+import { createServer } from "http";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
-import { runAgentPipeline } from "./agentPipeline";
-import type { AgentChatRequest } from "./types";
+import { WebSocketServer } from "ws";
+import { runAgentPipeline, runThoughtTransform } from "./agentPipeline";
+import type { AgentChatRequest, TransformRequest } from "./types";
 
 dotenv.config();
 
@@ -31,6 +33,67 @@ app.post("/api/agent-chat", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.post("/api/transform-thought", async (req, res) => {
+  const payload = req.body as TransformRequest;
+  if (!payload?.message || typeof payload.message !== "string") {
+    res.status(400).json({ error: "Message is required." });
+    return;
+  }
+  try {
+    const result = await runThoughtTransform(payload.message);
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown server error";
+    res.status(500).json({ error: message });
+  }
+});
+
+// Wrap the Express app in a raw HTTP server so we can attach a WebSocket
+// server on the same port. The WebSocket endpoint streams each agent step
+// to the client live, instead of waiting for the whole pipeline to finish.
+const server = createServer(app);
+const wss = new WebSocketServer({ server, path: "/ws/agent-chat" });
+
+wss.on("connection", (socket) => {
+  socket.on("message", async (raw) => {
+    let payload: AgentChatRequest;
+    try {
+      payload = JSON.parse(raw.toString()) as AgentChatRequest;
+    } catch {
+      socket.send(JSON.stringify({ type: "error", error: "Invalid request." }));
+      return;
+    }
+
+    if (!payload?.message || typeof payload.message !== "string") {
+      socket.send(JSON.stringify({ type: "error", error: "Message is required." }));
+      return;
+    }
+
+    try {
+      socket.send(
+        JSON.stringify({ type: "status", message: "Starting agent pipeline..." }),
+      );
+
+      const result = await runAgentPipeline(payload, (step) => {
+        if (socket.readyState === socket.OPEN) {
+          socket.send(JSON.stringify({ type: "agent-step", step }));
+        }
+      });
+
+      if (socket.readyState === socket.OPEN) {
+        socket.send(JSON.stringify({ type: "final", result }));
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not run agent pipeline.";
+      if (socket.readyState === socket.OPEN) {
+        socket.send(JSON.stringify({ type: "error", error: message }));
+      }
+    }
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`Ethereal Wellness backend running on http://localhost:${PORT}`);
+  console.log(`Agent stream available on ws://localhost:${PORT}/ws/agent-chat`);
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bot, ChevronDown, ShieldAlert } from "lucide-react";
 import type { AgentTraceEntry, SafetyLevel } from "../types";
 
@@ -14,15 +14,20 @@ export function AgentTracePanel({ trace, thinkingTrace, isThinking, safetyLevel 
   const displayTrace = isThinking ? thinkingTrace : trace;
   const hasTrace = displayTrace.length > 0;
 
+  // Auto-expand while the pipeline is running so agents are seen waking up live.
+  useEffect(() => {
+    if (isThinking) setOpen(true);
+  }, [isThinking]);
+
   return (
-    <div className="w-full max-w-xl rounded-2xl border border-stone/70 bg-white/70 px-4 py-3 shadow-soft ring-1 ring-white/70 backdrop-blur-md">
+    <div className="glass-panel w-full px-4 py-4">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-3 text-left"
       >
-        <span className="flex items-center gap-2 text-sm font-medium text-earth">
-          <Bot className="h-4 w-4" />
+        <span className="flex items-center gap-2 font-serif text-lg text-earth">
+          <Bot className="h-4 w-4 text-sageDeep" />
           Agent network
           {safetyLevel ? (
             <span className="rounded-full bg-mist/80 px-2 py-0.5 text-[0.68rem] uppercase tracking-wide text-sageDeep">

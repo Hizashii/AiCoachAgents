@@ -1,18 +1,19 @@
 import { askOllama } from "./ollama";
 import type {
+  ActionStep,
   AgentChatRequest,
   AgentChatResponse,
+  AgentName,
   AgentTraceEntry,
+  CoachMap,
   SafetyLevel,
+  ThoughtTransform,
   ChatTurn,
 } from "./types";
 
-type AgentName =
-  | "Listener Agent"
-  | "Coach Agent"
-  | "Safety Agent"
-  | "Summary Agent"
-  | "Speaker Agent";
+// Callback used to stream each agent step to the client (over WebSocket)
+// as soon as the agent finishes, instead of waiting for the whole pipeline.
+export type StepListener = (entry: AgentTraceEntry) => void;
 
 type AgentResult = {
   output: string;
@@ -25,6 +26,11 @@ const SAFETY_COPY =
 const AGENT_ROLES: Record<AgentName, string> = {
   "Listener Agent": "Understands the user's emotion, intent, and context.",
   "Coach Agent": "Creates practical, non-medical next steps.",
+  "Productivity Agent": "Creates deadline-focused, concrete next steps.",
+  "Wellness Agent": "Creates gentle, sustainable, low-pressure support.",
+  "Judge Agent": "Compares both approaches and chooses the best combined direction.",
+  "Planner Agent": "Turns the advice into 2-4 tiny, checkable action steps.",
+  "Mapper Agent": "Structures the situation into a visual map (emotion, blocker, goal, next step).",
   "Safety Agent": "Checks for crisis risk and keeps the app within safe boundaries.",
   "Summary Agent": "Summarizes the conversation state for the demo trace.",
   "Speaker Agent": "Rewrites the final answer so it sounds natural when spoken aloud.",
@@ -262,6 +268,111 @@ function createTraceEntry(
   };
 }
 
+const FALLBACK_ACTION_PLAN: ActionStep[] = [
+  {
+    title: "Open the document or task you are avoiding",
+    minutes: 2,
+    reason: "Reduces friction and starts momentum.",
+  },
+  {
+    title: "Work on just one tiny piece for five minutes",
+    minutes: 5,
+    reason: "Removes the pressure to finish everything at once.",
+  },
+];
+
+function parseActionPlan(raw: string): ActionStep[] {
+  // The model is asked to return JSON, but small local models often wrap it
+  // in prose, so we pull out the first JSON array we can find.
+  const match = raw.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .slice(0, 4)
+      .map((item) => ({
+        title: String(item?.title ?? "Small next step").slice(0, 120),
+        minutes: Math.max(1, Math.min(120, Number(item?.minutes) || 5)),
+        reason: String(item?.reason ?? "Helps you begin.").slice(0, 160),
+      }))
+      .filter((step) => step.title.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Pull a "Label: value" line out of the Listener Agent's structured output.
+function parseLabeledLine(text: string, label: string): string {
+  const match = text.match(new RegExp(`${label}\\s*:\\s*(.+)`, "i"));
+  return match ? match[1].trim() : "";
+}
+
+function firstSentence(text: string): string {
+  const cleaned = normalizeWhitespace(text);
+  const match = cleaned.match(/^[^.!?]*[.!?]/);
+  return (match ? match[0] : cleaned).trim();
+}
+
+// The Mapper Agent is deterministic on purpose (like the Safety Agent): it
+// structures the other agents' outputs into a CoachMap instead of asking the
+// LLM again. This keeps the canvas reliable and fast, and never breaks.
+function buildCoachMap(
+  message: string,
+  listenerOutput: string,
+  advice: string,
+  summary: string,
+  safetyLevel: SafetyLevel,
+): CoachMap {
+  const emotion = parseLabeledLine(listenerOutput, "Emotion") || "Mixed or unclear";
+  const intent = parseLabeledLine(listenerOutput, "Intent") || "Wants support";
+  const context = parseLabeledLine(listenerOutput, "Context") || message.slice(0, 80);
+
+  return {
+    emotion,
+    blocker: context,
+    goal: intent,
+    nextStep: firstSentence(advice) || "Take one small next step.",
+    safetyLevel,
+    summary: summary || "The system understood the situation and offered a small next step.",
+  };
+}
+
+const FALLBACK_TRANSFORM: ThoughtTransform = {
+  calmer:
+    "I'm behind, but I can still make progress by starting with one small part.",
+  actionable: "Open the document and write one imperfect first sentence.",
+  presentation:
+    "I am currently blocked by task size, so I will reduce the scope and start with one concrete step.",
+};
+
+function parseThoughtTransform(raw: string): ThoughtTransform | null {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+
+  try {
+    const parsed = JSON.parse(match[0]);
+    const calmer = String(parsed?.calmer ?? "").trim();
+    const actionable = String(parsed?.actionable ?? "").trim();
+    const presentation = String(parsed?.presentation ?? "").trim();
+    if (!calmer && !actionable && !presentation) return null;
+
+    return {
+      calmer: calmer || FALLBACK_TRANSFORM.calmer,
+      actionable: actionable || FALLBACK_TRANSFORM.actionable,
+      presentation: presentation || FALLBACK_TRANSFORM.presentation,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildBasePrompt(): string {
   return `
 You are part of a classroom demo about AI agents and agentic AI.
@@ -281,10 +392,14 @@ function buildUserContextBlock(
   message: string,
   mode: string,
   history: ChatTurn[],
+  studyContext?: string,
 ): string {
   return `
 Mode: ${mode}
 Mode guidance: ${modeHint(mode)}
+
+Project or assignment context:
+${studyContext?.trim() || "No extra context provided."}
 
 User message:
 ${message}
@@ -379,10 +494,23 @@ function buildMockResponse(
       createTraceEntry("Coach Agent", coachOutput, "Fallback used"),
       createTraceEntry("Safety Agent", formatSafetyOutput(safetyLevel), "Safety checked"),
       createTraceEntry("Summary Agent", summaryOutput, "Fallback used"),
+      createTraceEntry(
+        "Mapper Agent",
+        `Emotion: ${parseLabeledLine(listenerOutput, "Emotion") || "Mixed"}\nNext step: ${firstSentence(coachOutput)}`,
+        "Fallback used",
+      ),
       createTraceEntry("Speaker Agent", finalResponse, "Fallback used"),
     ],
     safetyLevel,
     mockMode: true,
+    actionPlan: safetyLevel === "crisis" ? [] : FALLBACK_ACTION_PLAN,
+    coachMap: buildCoachMap(
+      message,
+      listenerOutput,
+      coachOutput,
+      summaryOutput,
+      safetyLevel,
+    ),
   };
 }
 
@@ -413,6 +541,14 @@ function buildDemoScenarioResponse(): AgentChatResponse {
         "User feels overwhelmed and is avoiding an assignment. The plan is to reduce pressure with one tiny first action.",
       ),
       createTraceEntry(
+        "Planner Agent",
+        "Generated a tiny action plan so the user can start immediately.",
+      ),
+      createTraceEntry(
+        "Mapper Agent",
+        "Emotion: Overwhelmed\nBlocker: The assignment feels too big to start\nGoal: Begin working on the assignment\nNext step: Write one rough first sentence",
+      ),
+      createTraceEntry(
         "Speaker Agent",
         finalResponse,
         "Final voice response",
@@ -420,6 +556,32 @@ function buildDemoScenarioResponse(): AgentChatResponse {
     ],
     safetyLevel: "normal",
     mockMode: false,
+    actionPlan: [
+      {
+        title: "Open the assignment document",
+        minutes: 2,
+        reason: "Reduces friction and starts momentum.",
+      },
+      {
+        title: "Write one messy first sentence",
+        minutes: 5,
+        reason: "Removes perfection pressure so you can begin.",
+      },
+      {
+        title: "Set a 10-minute timer and only focus on starting",
+        minutes: 10,
+        reason: "Momentum usually comes after the first action.",
+      },
+    ],
+    coachMap: {
+      emotion: "Overwhelmed",
+      blocker: "The assignment feels too big to start",
+      goal: "Begin working on the assignment",
+      nextStep: "Write one rough first sentence",
+      safetyLevel: "normal",
+      summary:
+        "The user feels overwhelmed and is avoiding an assignment; the plan reduces pressure with one tiny first action.",
+    },
   };
 }
 
@@ -455,11 +617,38 @@ function buildCrisisResponse(message: string, mode: string): AgentChatResponse {
     ],
     safetyLevel,
     mockMode: false,
+    actionPlan: [],
+    coachMap: {
+      emotion: "Possible acute distress",
+      blocker: "Safety comes before normal coaching",
+      goal: "Reach immediate, real-world support",
+      nextStep: "Contact emergency services or someone you trust now",
+      safetyLevel: "crisis",
+      summary:
+        "Crisis-level language was detected; the response prioritizes emergency support and trusted human contact.",
+    },
   };
+}
+
+// Replays a pre-built response (demo / crisis / mock) through the streaming
+// callback so the audience still sees agents "wake up" one by one.
+async function streamPrebuilt(
+  response: AgentChatResponse,
+  onStep?: StepListener,
+): Promise<AgentChatResponse> {
+  if (!onStep) return response;
+
+  for (const entry of response.agentTrace) {
+    onStep(entry);
+    await delay(450);
+  }
+
+  return response;
 }
 
 export async function runAgentPipeline(
   input: AgentChatRequest,
+  onStep?: StepListener,
 ): Promise<AgentChatResponse> {
   const message = input.message?.trim();
 
@@ -469,19 +658,32 @@ export async function runAgentPipeline(
 
   const history = trimHistory(input.history);
   const mode = input.mode ?? "general";
+  const studyContext = input.studyContext;
 
   if (mode === "demo") {
-    return buildDemoScenarioResponse();
+    return streamPrebuilt(buildDemoScenarioResponse(), onStep);
   }
 
   const safetyLevel = detectSafetyLevel(message);
 
   if (safetyLevel === "crisis") {
-    return buildCrisisResponse(message, mode);
+    return streamPrebuilt(buildCrisisResponse(message, mode), onStep);
   }
 
-  const contextBlock = buildUserContextBlock(message, mode, history);
+  const contextBlock = buildUserContextBlock(message, mode, history, studyContext);
   const basePrompt = buildBasePrompt();
+  const debateMode = mode.toLowerCase().includes("debate");
+
+  // Collected trace + helper that records a step and streams it immediately.
+  const agentTrace: AgentTraceEntry[] = [];
+  let usedFallback = false;
+
+  const emit = (agent: AgentName, output: string, status?: string) => {
+    const entry = createTraceEntry(agent, output, status);
+    agentTrace.push(entry);
+    onStep?.(entry);
+    return entry;
+  };
 
   const listenerFallback =
     "Emotion: unclear or mixed.\nIntent: user wants support.\nContext: short message with limited detail.";
@@ -508,14 +710,113 @@ Do not ask questions.
     },
     listenerFallback,
   );
+  usedFallback = usedFallback || listener.usedFallback;
+  emit(
+    "Listener Agent",
+    limitSentences(listener.output, 3),
+    listener.usedFallback ? "Fallback used" : "Completed",
+  );
 
-  const coachFallback =
-    "Choose one tiny next step. Lower the pressure, set a short timer, and focus only on beginning.";
+  // "advice" is the draft that the Speaker Agent will turn into the final reply.
+  // In normal mode it comes from the Coach Agent. In debate mode it comes from
+  // the Judge Agent, after the Productivity and Wellness agents argue.
+  let advice: string;
 
-  const coach = await askAgent(
-    "Coach Agent",
-    {
-      systemPrompt: `
+  if (debateMode) {
+    const productivity = await askAgent(
+      "Productivity Agent",
+      {
+        systemPrompt: `
+${basePrompt}
+
+You are Productivity Agent.
+Give concrete, time-based, deadline-focused next steps.
+Max 80 words.
+`.trim(),
+        userPrompt: `
+${contextBlock}
+
+Listener notes:
+${listener.output}
+`.trim(),
+        history,
+      },
+      "Start with one tiny 5-minute task and block out a clear time for it.",
+    );
+    usedFallback = usedFallback || productivity.usedFallback;
+    emit(
+      "Productivity Agent",
+      limitWords(productivity.output, 90),
+      productivity.usedFallback ? "Fallback used" : "Completed",
+    );
+
+    const wellness = await askAgent(
+      "Wellness Agent",
+      {
+        systemPrompt: `
+${basePrompt}
+
+You are Wellness Agent.
+Focus on emotional pressure, pacing, and sustainable effort.
+Max 80 words.
+`.trim(),
+        userPrompt: `
+${contextBlock}
+
+Listener notes:
+${listener.output}
+`.trim(),
+        history,
+      },
+      "Lower the pressure, breathe, and choose one gentle next step.",
+    );
+    usedFallback = usedFallback || wellness.usedFallback;
+    emit(
+      "Wellness Agent",
+      limitWords(wellness.output, 90),
+      wellness.usedFallback ? "Fallback used" : "Completed",
+    );
+
+    const judge = await askAgent(
+      "Judge Agent",
+      {
+        systemPrompt: `
+${basePrompt}
+
+You are Judge Agent.
+Compare the Productivity Agent and Wellness Agent.
+Choose the best combined direction that is both practical and gentle.
+Max 100 words.
+`.trim(),
+        userPrompt: `
+Productivity Agent:
+${productivity.output}
+
+Wellness Agent:
+${wellness.output}
+
+Create the best combined recommendation.
+`.trim(),
+        history,
+      },
+      "Take one small practical step while keeping the pressure low.",
+    );
+    usedFallback = usedFallback || judge.usedFallback;
+    emit(
+      "Judge Agent",
+      limitWords(judge.output, 110),
+      judge.usedFallback ? "Fallback used" : "Completed",
+    );
+
+    advice = judge.output;
+  } else {
+    const coachFallback =
+      "Choose one tiny next step. Lower the pressure, set a short timer, and focus only on beginning.";
+
+    const coach = await askAgent(
+      "Coach Agent",
+      {
+        systemPrompt: `
 ${basePrompt}
 
 You are Coach Agent.
@@ -528,7 +829,7 @@ Rules:
 - Focus on one or two concrete next steps.
 - Max 100 words.
 `.trim(),
-      userPrompt: `
+        userPrompt: `
 ${contextBlock}
 
 Listener notes:
@@ -536,14 +837,63 @@ ${listener.output}
 
 Create a concise coaching draft.
 `.trim(),
-      history,
-    },
-    coachFallback,
-  );
+        history,
+      },
+      coachFallback,
+    );
+    usedFallback = usedFallback || coach.usedFallback;
+    emit(
+      "Coach Agent",
+      limitWords(coach.output, 110),
+      coach.usedFallback ? "Fallback used" : "Completed",
+    );
+
+    advice = coach.output;
+  }
 
   // Safety is deterministic on purpose.
   // We do not let the LLM decide whether the user is safe.
   const safetyOutput = formatSafetyOutput(safetyLevel);
+  emit("Safety Agent", safetyOutput, "Safety checked");
+
+  // Planner Agent turns the advice into a tiny, checkable action plan.
+  const planner = await askAgent(
+    "Planner Agent",
+    {
+      systemPrompt: `
+${basePrompt}
+
+You are Planner Agent.
+Create 2-4 tiny action steps based on the advice draft.
+
+Return only valid JSON, nothing else:
+[
+  { "title": "...", "minutes": 5, "reason": "..." }
+]
+`.trim(),
+      userPrompt: `
+User message:
+${message}
+
+Advice draft:
+${advice}
+`.trim(),
+      history,
+    },
+    JSON.stringify(FALLBACK_ACTION_PLAN),
+  );
+  const actionPlan =
+    parseActionPlan(planner.output).length > 0
+      ? parseActionPlan(planner.output)
+      : FALLBACK_ACTION_PLAN;
+  usedFallback = usedFallback || planner.usedFallback;
+  emit(
+    "Planner Agent",
+    actionPlan
+      .map((step) => `• ${step.title} (${step.minutes} min)`)
+      .join("\n"),
+    planner.usedFallback ? "Fallback used" : "Completed",
+  );
 
   const summaryFallback =
     "User asked for support. The system generated practical guidance and applied safety guardrails.";
@@ -569,8 +919,8 @@ ${message}
 Listener:
 ${listener.output}
 
-Coach:
-${coach.output}
+Advice:
+${advice}
 
 Safety:
 ${safetyOutput}
@@ -578,6 +928,33 @@ ${safetyOutput}
       history,
     },
     summaryFallback,
+  );
+  usedFallback = usedFallback || summary.usedFallback;
+  const summaryClean = limitSentences(summary.output, 2);
+  emit(
+    "Summary Agent",
+    summaryClean,
+    summary.usedFallback ? "Fallback used" : "Completed",
+  );
+
+  // Mapper Agent (deterministic) structures everything into a CoachMap for the
+  // visual canvas.
+  const coachMap = buildCoachMap(
+    message,
+    listener.output,
+    advice,
+    summaryClean,
+    safetyLevel,
+  );
+  emit(
+    "Mapper Agent",
+    [
+      `Emotion: ${coachMap.emotion}`,
+      `Blocker: ${coachMap.blocker}`,
+      `Goal: ${coachMap.goal}`,
+      `Next step: ${coachMap.nextStep}`,
+    ].join("\n"),
+    "Completed",
   );
 
   const speakerFallback =
@@ -590,7 +967,7 @@ ${safetyOutput}
 ${basePrompt}
 
 You are Speaker Agent.
-Turn the coaching draft into the final user-facing spoken response.
+Turn the advice draft into the final user-facing spoken response.
 
 Rules:
 - Under 75 words.
@@ -606,8 +983,8 @@ ${contextBlock}
 
 Safety level: ${safetyLevel}
 
-Coaching draft:
-${coach.output}
+Advice draft:
+${advice}
 
 Return only the final response spoken to the user.
 `.trim(),
@@ -617,44 +994,63 @@ Return only the final response spoken to the user.
   );
 
   const finalResponse = limitWords(speaker.output, 75);
-  const summaryClean = limitSentences(summary.output, 2);
-
-  const agentTrace: AgentTraceEntry[] = [
-    createTraceEntry(
-      "Listener Agent",
-      limitSentences(listener.output, 3),
-      listener.usedFallback ? "Fallback used" : "Completed",
-    ),
-    createTraceEntry(
-      "Coach Agent",
-      limitWords(coach.output, 110),
-      coach.usedFallback ? "Fallback used" : "Completed",
-    ),
-    createTraceEntry(
-      "Safety Agent",
-      safetyOutput,
-      "Safety checked",
-    ),
-    createTraceEntry(
-      "Summary Agent",
-      summaryClean,
-      summary.usedFallback ? "Fallback used" : "Completed",
-    ),
-    createTraceEntry(
-      "Speaker Agent",
-      finalResponse,
-      speaker.usedFallback ? "Fallback used" : "Final voice response",
-    ),
-  ];
+  usedFallback = usedFallback || speaker.usedFallback;
+  emit(
+    "Speaker Agent",
+    finalResponse,
+    speaker.usedFallback ? "Fallback used" : "Final voice response",
+  );
 
   return {
     finalResponse,
     agentTrace,
     safetyLevel,
-    mockMode:
-      listener.usedFallback ||
-      coach.usedFallback ||
-      summary.usedFallback ||
-      speaker.usedFallback,
+    mockMode: usedFallback,
+    actionPlan,
+    coachMap,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Thought Transformer — a separate transformative-AI feature that rewrites a
+// messy thought into three useful versions. Used by POST /api/transform-thought.
+// ---------------------------------------------------------------------------
+export async function runThoughtTransform(
+  message: string,
+): Promise<{ transform: ThoughtTransform; mockMode: boolean }> {
+  const trimmed = message?.trim();
+  if (!trimmed) {
+    throw new Error("Message is required.");
+  }
+
+  const basePrompt = buildBasePrompt();
+
+  const result = await askAgent(
+    "Speaker Agent",
+    {
+      systemPrompt: `
+${basePrompt}
+
+You are Transform Agent.
+Rewrite the user's messy, stressed thought into three useful versions.
+
+Return only valid JSON, nothing else:
+{
+  "calmer": "a calmer, kinder reframe",
+  "actionable": "one concrete first action",
+  "presentation": "a clear, professional way to say it out loud"
+}
+`.trim(),
+      userPrompt: `User thought:\n${trimmed}`,
+      history: [],
+    },
+    JSON.stringify(FALLBACK_TRANSFORM),
+  );
+
+  const parsed = parseThoughtTransform(result.output);
+
+  return {
+    transform: parsed ?? FALLBACK_TRANSFORM,
+    mockMode: result.usedFallback || parsed === null,
   };
 }

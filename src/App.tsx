@@ -7,37 +7,47 @@ import {
   CloudFog,
   Compass,
   Feather,
+  FileText,
   Layers2,
   Leaf,
   LifeBuoy,
   MessageCircle,
+  Presentation,
   Scale,
-  Settings,
   Square,
   SunMedium,
-  UserRound,
+  Swords,
   Volume2,
   VolumeX,
   Waves,
 } from "lucide-react";
-import { sendAgentChat } from "./api";
+import { sendAgentChatStream } from "./api";
+import { ActionPlanPanel } from "./components/ActionPlanPanel";
+import { AgentReplayTimeline } from "./components/AgentReplayTimeline";
 import { AgentTracePanel } from "./components/AgentTracePanel";
 import { Avatar } from "./components/Avatar";
 import { ChatInput } from "./components/ChatInput";
+import { CoachCanvas } from "./components/CoachCanvas";
+import { CockpitShell } from "./components/CockpitShell";
+import { MoodDashboard } from "./components/MoodDashboard";
+import { PresentationMode } from "./components/PresentationMode";
+import { SafetyPanel } from "./components/SafetyPanel";
 import { SidebarOption } from "./components/SidebarOption";
+import { StatusPill } from "./components/StatusPill";
+import { ThoughtTransformer } from "./components/ThoughtTransformer";
 import { Transcript } from "./components/Transcript";
 import { Waveform } from "./components/Waveform";
-import type { AgentTraceEntry, AppPresence, ChatMessage, SafetyLevel } from "./types";
+import { getMoodLogs, saveMoodLog, type MoodLog } from "./storage";
+import type {
+  ActionStep,
+  AgentTraceEntry,
+  AppPresence,
+  ChatMessage,
+  CoachMap,
+  SafetyLevel,
+} from "./types";
 
-const THINKING_MS = 1400;
 const DEMO_MESSAGE = "I feel overwhelmed and I can’t start my assignment.";
-const AGENT_SEQUENCE: AgentTraceEntry[] = [
-  { agent: "Listener Agent", output: "Reading your message and identifying emotion + intent..." },
-  { agent: "Coach Agent", output: "Preparing practical, non-medical next steps..." },
-  { agent: "Safety Agent", output: "Running safety scan for crisis or risk language..." },
-  { agent: "Summary Agent", output: "Summarizing conversation state for the demo trace..." },
-  { agent: "Speaker Agent", output: "Crafting a warm, short response for voice output..." },
-];
 
 type WebkitWindow = Window & {
   SpeechRecognition?: {
@@ -166,6 +176,14 @@ export default function App() {
   const [thinkingTrace, setThinkingTrace] = useState<AgentTraceEntry[]>([]);
   const [safetyLevel, setSafetyLevel] = useState<SafetyLevel | null>(null);
   const [mockMode, setMockMode] = useState(false);
+  const [actionPlan, setActionPlan] = useState<ActionStep[]>([]);
+  const [coachMap, setCoachMap] = useState<CoachMap | null>(null);
+  const [studyContext, setStudyContext] = useState("");
+  const [showStudyContext, setShowStudyContext] = useState(false);
+  const [debateMode, setDebateMode] = useState(false);
+  const [presentationOpen, setPresentationOpen] = useState(false);
+  const [transformSeed, setTransformSeed] = useState("");
+  const [moodLogs, setMoodLogs] = useState<MoodLog[]>([]);
   const [voiceReplyOn, setVoiceReplyOn] = useState(true);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
@@ -174,38 +192,11 @@ export default function App() {
   const [isSpeakingOut, setIsSpeakingOut] = useState(false);
   const exchangeLock = useRef(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const traceTimerRef = useRef<number | null>(null);
-  const stopThinkingTrace = useCallback(() => {
-    if (traceTimerRef.current !== null) {
-      window.clearInterval(traceTimerRef.current);
-      traceTimerRef.current = null;
-    }
+
+  // Load any saved mood sessions once on mount.
+  useEffect(() => {
+    setMoodLogs(getMoodLogs());
   }, []);
-
-  const startThinkingTrace = useCallback(() => {
-    stopThinkingTrace();
-    setThinkingTrace(
-      AGENT_SEQUENCE.map((step, idx) => ({
-        agent: step.agent,
-        output: idx === 0 ? step.output : "Waiting for previous agent...",
-      })),
-    );
-    let stepIndex = 1;
-    traceTimerRef.current = window.setInterval(() => {
-      setThinkingTrace((prev) =>
-        prev.map((item, idx) => {
-          if (idx < stepIndex) return { ...item, output: `${AGENT_SEQUENCE[idx].output} Done.` };
-          if (idx === stepIndex) return { ...item, output: AGENT_SEQUENCE[idx].output };
-          return item;
-        }),
-      );
-      stepIndex += 1;
-      if (stepIndex >= AGENT_SEQUENCE.length) {
-        stopThinkingTrace();
-      }
-    }, 700);
-  }, [stopThinkingTrace]);
-
 
   const getPreferredVoice = useCallback(
     (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined => {
@@ -332,41 +323,71 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      stopThinkingTrace();
       recognitionRef.current?.stop();
       window.speechSynthesis.cancel();
     };
-  }, [stopThinkingTrace]);
+  }, []);
 
   const processExchange = useCallback(async (userText: string, mode = "general") => {
     const trimmed = userText.trim();
     if (!trimmed || exchangeLock.current) return;
     exchangeLock.current = true;
 
+    // Debate mode overrides the mode for any real (non-demo) exchange.
+    const effectiveMode = debateMode && mode !== "demo" ? "debate" : mode;
+
     setPresence("listening");
+    setAgentTrace([]);
+    setThinkingTrace([]);
+    setActionPlan([]);
+    setCoachMap(null);
     setMessages((m) => [
       ...m,
       { id: createId(), role: "user", text: trimmed },
     ]);
-    startThinkingTrace();
 
     try {
-      await new Promise((r) => setTimeout(r, THINKING_MS));
-
-      const result = await sendAgentChat({
-        message: trimmed,
-        mode,
-        history: messages.slice(-10).map((m) => ({ role: m.role, content: m.text })),
-      });
+      const result = await sendAgentChatStream(
+        {
+          message: trimmed,
+          mode: effectiveMode,
+          history: messages.slice(-10).map((m) => ({ role: m.role, content: m.text })),
+          studyContext: studyContext.trim() || undefined,
+        },
+        {
+          // Each agent appears live as the backend finishes it.
+          onStep: (step) => {
+            setThinkingTrace((prev) => {
+              const withoutAgent = prev.filter((p) => p.agent !== step.agent);
+              return [...withoutAgent, step];
+            });
+          },
+        },
+      );
       const reply = result.finalResponse;
       setAgentTrace(result.agentTrace);
       setThinkingTrace([]);
       setSafetyLevel(result.safetyLevel);
       setMockMode(result.mockMode);
+      setActionPlan(result.actionPlan ?? []);
+      setCoachMap(result.coachMap ?? null);
       setMessages((m) => [
         ...m,
         { id: createId(), role: "assistant", text: reply },
       ]);
+
+      // Persist this exchange so the mood dashboard can show patterns over time.
+      saveMoodLog({
+        id: createId(),
+        createdAt: new Date().toISOString(),
+        label: selectedLabel,
+        mode: effectiveMode,
+        safetyLevel: result.safetyLevel,
+        userMessage: trimmed,
+        assistantReply: reply,
+      });
+      setMoodLogs(getMoodLogs());
+
       await speakText(reply);
       setPresence("idle");
     } catch (error) {
@@ -380,10 +401,9 @@ export default function App() {
       ]);
       setPresence("idle");
     } finally {
-      stopThinkingTrace();
       exchangeLock.current = false;
     }
-  }, [messages, speakText, startThinkingTrace, stopThinkingTrace]);
+  }, [messages, speakText, debateMode, studyContext, selectedLabel]);
 
   const handleSend = useCallback(() => {
     const t = input.trim();
@@ -410,47 +430,130 @@ export default function App() {
     void processExchange(DEMO_MESSAGE, "demo");
   }, [presence, processExchange]);
 
+  const handleResetDemo = useCallback(() => {
+    stopSpeaking();
+    setMessages([]);
+    setAgentTrace([]);
+    setThinkingTrace([]);
+    setActionPlan([]);
+    setCoachMap(null);
+    setSafetyLevel(null);
+    setMockMode(false);
+    setSelectedLabel(null);
+    setInput("");
+  }, [stopSpeaking]);
+
+  const handleRunTransform = useCallback((text: string) => {
+    // Seed the Thought Transformer panel (it remounts on a new seed) and bring
+    // it into view.
+    setTransformSeed(text);
+    window.setTimeout(() => {
+      document
+        .getElementById("thought-transformer")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+  }, []);
+
   const busy = presence !== "idle";
   const statusText = statusForPresence(presence);
+  const safety: SafetyLevel = safetyLevel ?? "normal";
 
-  return (
-    <div className="relative flex min-h-screen flex-col overflow-x-hidden">
-      <div className="pointer-events-none fixed inset-0 -z-20 wellness-room-base" aria-hidden />
-      <div
-        className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-b from-cream/50 via-transparent to-linen/80"
-        aria-hidden
-      />
-      <div className="pointer-events-none fixed inset-0 -z-10 leaf-light-overlay" aria-hidden />
-
-      <header className="relative z-10 flex shrink-0 items-center justify-between px-5 py-5 sm:px-8">
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-cream/90 text-sageDeep shadow-soft ring-2 ring-white/90">
-            <Leaf className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.75} />
-          </span>
-          <h1 className="font-serif text-xl font-semibold tracking-wide text-earth sm:text-2xl">
+  const header = (
+    <header className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-8">
+      <div className="flex items-center gap-3">
+        <span className="accent-glow flex h-10 w-10 items-center justify-center rounded-full bg-cream/90 text-sageDeep shadow-soft ring-2 ring-white/90">
+          <Leaf className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.75} />
+        </span>
+        <div>
+          <h1 className="font-serif text-xl font-semibold leading-none tracking-wide text-earth sm:text-2xl">
             Ethereal Wellness
           </h1>
+          <p className="text-[0.7rem] text-bark/55">AI agentic coaching cockpit</p>
         </div>
-        <div className="flex items-center gap-1 sm:gap-2">
-          <button
-            type="button"
-            aria-label="Settings"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-bark/65 transition hover:bg-white/70 hover:text-earth hover:shadow-soft"
-          >
-            <Settings className="h-5 w-5" strokeWidth={1.65} />
-          </button>
-          <button
-            type="button"
-            aria-label="Profile"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-bark/65 transition hover:bg-white/70 hover:text-earth hover:shadow-soft"
-          >
-            <UserRound className="h-5 w-5" strokeWidth={1.65} />
-          </button>
-        </div>
-      </header>
+      </div>
+      <div className="flex items-center gap-2 sm:gap-3">
+        <StatusPill safetyLevel={safetyLevel} mockMode={mockMode} />
+        <span className="hidden text-sm text-bark/70 md:inline">{statusText}</span>
+        <button
+          type="button"
+          onClick={() => setPresentationOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-full bg-sageMuted px-3.5 py-2 text-xs font-medium text-white shadow-soft transition hover:bg-moss"
+        >
+          <Presentation className="h-4 w-4" />
+          Presentation Mode
+        </button>
+      </div>
+    </header>
+  );
 
-      <main className="relative z-10 flex flex-1 flex-col gap-10 px-4 pb-8 pt-6 lg:flex-row lg:gap-10 lg:px-6 lg:pt-12 xl:px-10">
-        <aside className="flex shrink-0 flex-row gap-3 overflow-x-auto pb-1 lg:w-64 lg:flex-col lg:overflow-visible lg:pb-0 xl:w-[17rem]">
+  const left = (
+    <>
+      <section className="glass-panel px-4 py-4">
+        <h2 className="mb-3 font-serif text-lg text-earth">Controls</h2>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleDemo}
+            disabled={busy}
+            title="Run classroom demo scenario"
+            className="rounded-full border border-stone/60 bg-white/70 px-3 py-1.5 text-xs font-medium text-bark transition hover:bg-white disabled:opacity-40"
+          >
+            Run demo
+          </button>
+          <button
+            type="button"
+            onClick={() => setDebateMode((v) => !v)}
+            disabled={busy}
+            aria-pressed={debateMode}
+            title="Two agents debate, a judge decides"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition disabled:opacity-40 ${
+              debateMode
+                ? "border-sageDeep/50 bg-sage/25 text-sageDeep"
+                : "border-stone/60 bg-white/70 text-bark hover:bg-white"
+            }`}
+          >
+            <Swords className="h-3.5 w-3.5" />
+            Debate {debateMode ? "on" : "off"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowStudyContext((v) => !v)}
+            aria-pressed={showStudyContext}
+            title="Add assignment or project context for the AI"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+              studyContext.trim()
+                ? "border-sageDeep/50 bg-sage/25 text-sageDeep"
+                : "border-stone/60 bg-white/70 text-bark hover:bg-white"
+            }`}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Context
+          </button>
+        </div>
+
+        {showStudyContext ? (
+          <div className="mt-3">
+            <label
+              htmlFor="study-context"
+              className="mb-1 block text-[0.68rem] uppercase tracking-wide text-bark/65"
+            >
+              Assignment / project context (RAG-lite)
+            </label>
+            <textarea
+              id="study-context"
+              value={studyContext}
+              onChange={(e) => setStudyContext(e.target.value)}
+              placeholder="Paste your assignment brief or project context here. The AI will use it when giving advice..."
+              rows={4}
+              className="w-full rounded-2xl border border-stone/70 bg-white/70 p-3 text-sm text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
+            />
+          </div>
+        ) : null}
+      </section>
+
+      <section className="glass-panel px-4 py-4">
+        <h2 className="mb-3 font-serif text-lg text-earth">How do you feel?</h2>
+        <div className="flex flex-col gap-2">
           {MOOD_OPTIONS.map(({ label, icon: Icon }) => (
             <SidebarOption
               key={label}
@@ -462,142 +565,12 @@ export default function App() {
               onClick={() => handlePreset(label)}
             />
           ))}
-        </aside>
+        </div>
+      </section>
 
-        <section className="flex min-w-0 flex-1 flex-col items-center gap-6 lg:py-1">
-          <button
-            type="button"
-            onClick={handleDemo}
-            disabled={busy}
-            title="Run classroom demo scenario"
-            className="self-end rounded-full border border-stone/60 bg-white/55 px-3 py-1 text-[0.65rem] font-medium uppercase tracking-wide text-bark/70 transition hover:bg-white/75 hover:text-bark disabled:opacity-40"
-          >
-            Demo
-          </button>
-          <div className="relative w-[min(100%,340px)] max-w-[min(94vw,380px)]">
-            <div
-              className="pointer-events-none absolute -inset-4 rounded-full bg-leaf-shade opacity-90 blur-2xl"
-              aria-hidden
-            />
-            <div
-              className="pointer-events-none absolute -inset-1 rounded-full bg-gradient-to-br from-white/55 via-cream/25 to-transparent shadow-[inset_0_0_40px_rgba(255,255,255,0.35)] ring-1 ring-white/70 backdrop-blur-[2px]"
-              aria-hidden
-            />
-
-            <motion.div
-              className="relative rounded-full bg-gradient-to-br from-white/95 via-cream/90 to-mist/75 p-[3px] shadow-natural ring-1 ring-stone/40"
-              animate={{
-                scale: presence === "speaking" ? [1, 1.025, 1] : 1,
-                boxShadow:
-                  presence === "speaking"
-                    ? "0 20px 50px -12px rgba(85, 107, 84, 0.35), 0 0 0 1px rgba(255,255,255,0.5)"
-                    : "0 18px 44px -16px rgba(61, 53, 46, 0.2), 0 0 0 1px rgba(255,255,255,0.45)",
-              }}
-              transition={{
-                duration: presence === "speaking" ? 1.85 : 0.45,
-                repeat: presence === "speaking" ? Infinity : 0,
-                ease: "easeInOut",
-              }}
-            >
-              <div className="rounded-full bg-gradient-to-b from-white/80 via-cream/50 to-linen/60 p-1.5 shadow-glass ring-1 ring-white/90">
-                <div className="relative aspect-square overflow-hidden rounded-full bg-gradient-to-b from-cream via-linen to-sand shadow-[inset_0_2px_24px_rgba(61,53,46,0.06)]">
-                  <Avatar presence={presence} className="h-full w-full min-h-[200px]" />
-                </div>
-              </div>
-            </motion.div>
-          </div>
-
-          <div className="min-h-[2.75rem] text-center">
-            <AnimatePresence mode="wait">
-              <motion.p
-                key={presence}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.35, ease: "easeOut" }}
-                className="font-serif text-xl text-earth sm:text-2xl"
-              >
-                {statusText}
-              </motion.p>
-            </AnimatePresence>
-          </div>
-          {mockMode ? (
-            <p className="rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-800">
-              Demo fallback active (mock mode): Ollama unavailable.
-            </p>
-          ) : null}
-
-          <Waveform presence={presence} />
-
-          <Transcript messages={messages} />
-          <AgentTracePanel
-            trace={agentTrace}
-            thinkingTrace={thinkingTrace}
-            isThinking={presence === "listening"}
-            safetyLevel={safetyLevel}
-          />
-
-          <div className="flex w-full max-w-xl items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setVoiceReplyOn((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white"
-            >
-              {voiceReplyOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-              Voice reply {voiceReplyOn ? "on" : "off"}
-            </button>
-            <button
-              type="button"
-              onClick={stopSpeaking}
-              className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white disabled:opacity-50"
-              disabled={!isSpeakingOut}
-            >
-              <Square className="h-3.5 w-3.5" />
-              Stop speaking
-            </button>
-          </div>
-          <div className="w-full max-w-xl">
-            <label className="mb-1 block text-[0.68rem] uppercase tracking-wide text-bark/65">
-              Voice style
-            </label>
-            <select
-              value={selectedVoiceName}
-              onChange={(e) => setSelectedVoiceName(e.target.value)}
-              className="w-full rounded-xl border border-stone/70 bg-white/70 px-3 py-2 text-xs text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
-            >
-              {availableVoices.length === 0 ? (
-                <option value="">Default browser voice</option>
-              ) : (
-                availableVoices
-                  .filter((v) => /^en[-_]/i.test(v.lang))
-                  .map((voice) => (
-                    <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
-                      {voice.name} ({voice.lang})
-                    </option>
-                  ))
-              )}
-            </select>
-          </div>
-          {voiceError ? <p className="w-full max-w-xl text-xs text-rose-700">{voiceError}</p> : null}
-          {!canUseSpeechRecognition ? (
-            <p className="w-full max-w-xl text-xs text-bark/70">
-              Voice input is not supported in this browser. Please type instead.
-            </p>
-          ) : null}
-
-          <div className="mt-auto w-full pt-1">
-            <ChatInput
-              value={input}
-              onChange={setInput}
-              onSend={handleSend}
-              onToggleVoiceInput={toggleVoiceInput}
-              isListening={isListening}
-              disabled={busy}
-            />
-          </div>
-        </section>
-
-        <aside className="flex shrink-0 flex-row gap-3 overflow-x-auto pb-1 lg:w-64 lg:flex-col lg:overflow-visible lg:pb-0 xl:w-[17rem]">
+      <section className="glass-panel px-4 py-4">
+        <h2 className="mb-3 font-serif text-lg text-earth">What do you need?</h2>
+        <div className="flex flex-col gap-2">
           {ACTION_OPTIONS.map(({ label, icon: Icon }) => (
             <SidebarOption
               key={label}
@@ -609,14 +582,174 @@ export default function App() {
               onClick={() => handlePreset(label)}
             />
           ))}
-        </aside>
-      </main>
+        </div>
+      </section>
+    </>
+  );
 
-      <footer className="relative z-10 shrink-0 px-4 pb-6 pt-2 text-center">
-        <p className="text-[0.74rem] text-bark/55 sm:text-[0.8rem]">
-          AI wellness companion — not a medical professional.
+  const center = (
+    <>
+      <div className="relative w-[min(100%,320px)] max-w-[min(94vw,360px)]">
+        <div
+          className="pointer-events-none absolute -inset-4 rounded-full bg-leaf-shade opacity-90 blur-2xl"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute -inset-1 rounded-full bg-gradient-to-br from-white/55 via-cream/25 to-transparent shadow-[inset_0_0_40px_rgba(255,255,255,0.35)] ring-1 ring-white/70 backdrop-blur-[2px]"
+          aria-hidden
+        />
+
+        <motion.div
+          className="accent-glow relative rounded-full bg-gradient-to-br from-white/95 via-cream/90 to-mist/75 p-[3px] shadow-natural ring-1 ring-stone/40"
+          animate={{
+            scale: presence === "speaking" ? [1, 1.025, 1] : 1,
+            boxShadow:
+              presence === "speaking"
+                ? "0 20px 50px -12px rgba(85, 107, 84, 0.35), 0 0 0 1px rgba(255,255,255,0.5)"
+                : "0 18px 44px -16px rgba(61, 53, 46, 0.2), 0 0 0 1px rgba(255,255,255,0.45)",
+          }}
+          transition={{
+            duration: presence === "speaking" ? 1.85 : 0.45,
+            repeat: presence === "speaking" ? Infinity : 0,
+            ease: "easeInOut",
+          }}
+        >
+          <div className="rounded-full bg-gradient-to-b from-white/80 via-cream/50 to-linen/60 p-1.5 shadow-glass ring-1 ring-white/90">
+            <div className="relative aspect-square overflow-hidden rounded-full bg-gradient-to-b from-cream via-linen to-sand shadow-[inset_0_2px_24px_rgba(61,53,46,0.06)]">
+              <Avatar presence={presence} className="h-full w-full min-h-[200px]" />
+            </div>
+          </div>
+        </motion.div>
+      </div>
+
+      <div className="min-h-[2.5rem] text-center">
+        <AnimatePresence mode="wait">
+          <motion.p
+            key={presence}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+            className="font-serif text-xl text-earth sm:text-2xl"
+          >
+            {statusText}
+          </motion.p>
+        </AnimatePresence>
+      </div>
+
+      <Waveform presence={presence} />
+
+      {safety === "crisis" ? <SafetyPanel /> : null}
+
+      <Transcript messages={messages} />
+
+      <div className="flex w-full max-w-xl flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setVoiceReplyOn((v) => !v)}
+          className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white"
+        >
+          {voiceReplyOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+          Voice reply {voiceReplyOn ? "on" : "off"}
+        </button>
+        <button
+          type="button"
+          onClick={stopSpeaking}
+          className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white disabled:opacity-50"
+          disabled={!isSpeakingOut}
+        >
+          <Square className="h-3.5 w-3.5" />
+          Stop speaking
+        </button>
+        <select
+          value={selectedVoiceName}
+          onChange={(e) => setSelectedVoiceName(e.target.value)}
+          aria-label="Voice style"
+          className="min-w-0 flex-1 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
+        >
+          {availableVoices.length === 0 ? (
+            <option value="">Default browser voice</option>
+          ) : (
+            availableVoices
+              .filter((v) => /^en[-_]/i.test(v.lang))
+              .map((voice) => (
+                <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
+                  {voice.name} ({voice.lang})
+                </option>
+              ))
+          )}
+        </select>
+      </div>
+      {voiceError ? <p className="w-full max-w-xl text-xs text-rose-700">{voiceError}</p> : null}
+      {!canUseSpeechRecognition ? (
+        <p className="w-full max-w-xl text-xs text-bark/70">
+          Voice input is not supported in this browser. Please type instead.
         </p>
-      </footer>
-    </div>
+      ) : null}
+
+      <div className="w-full max-w-xl">
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSend={handleSend}
+          onToggleVoiceInput={toggleVoiceInput}
+          isListening={isListening}
+          disabled={busy}
+        />
+      </div>
+    </>
+  );
+
+  const right = (
+    <>
+      <AgentTracePanel
+        trace={agentTrace}
+        thinkingTrace={thinkingTrace}
+        isThinking={presence === "listening"}
+        safetyLevel={safetyLevel}
+      />
+      <AgentReplayTimeline trace={agentTrace} />
+      <CoachCanvas coachMap={coachMap} />
+      <ActionPlanPanel plan={actionPlan} />
+    </>
+  );
+
+  const bottom = (
+    <>
+      <div id="thought-transformer">
+        <ThoughtTransformer key={transformSeed} initialText={transformSeed} />
+      </div>
+      <MoodDashboard logs={moodLogs} onCleared={() => setMoodLogs(getMoodLogs())} />
+    </>
+  );
+
+  const footer = (
+    <p className="text-[0.74rem] text-bark/55 sm:text-[0.8rem]">
+      AI wellness companion — not a medical professional.
+    </p>
+  );
+
+  return (
+    <>
+      <CockpitShell
+        safety={safety}
+        header={header}
+        left={left}
+        center={center}
+        right={right}
+        bottom={bottom}
+        footer={footer}
+      />
+      <PresentationMode
+        open={presentationOpen}
+        onClose={() => setPresentationOpen(false)}
+        onRunScenario={(message, mode) => {
+          setSelectedLabel(null);
+          void processExchange(message, mode ?? "general");
+        }}
+        onRunTransform={handleRunTransform}
+        onResetDemo={handleResetDemo}
+      />
+    </>
   );
 }
