@@ -26,6 +26,19 @@ npm run dev:all
 
 Open **http://localhost:5173**. Backend runs on port **8787**.
 
+## Exam day (live presentation)
+
+Use your **local machine with Ollama** — not the cloud URL:
+
+```bash
+ollama serve
+npm run dev:all
+```
+
+Open **http://localhost:5173**. The deployed web service stays in mock mode; local + Ollama gives real AI responses.
+
+Before you present: run the **Overwhelmed (full demo)** once to confirm Ollama responds. If Ollama fails, mock mode still works for the demo.
+
 ## Quick demo
 
 1. **Command Panel → Demo → Overwhelmed (full demo)**
