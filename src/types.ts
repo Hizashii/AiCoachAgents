@@ -29,7 +29,6 @@ export type ActionStep = {
   title: string;
   minutes: number;
   reason: string;
-  completed?: boolean;
 };
 
 export type CoachMap = {

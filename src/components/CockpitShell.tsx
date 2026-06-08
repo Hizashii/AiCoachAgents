@@ -30,30 +30,31 @@ export function CockpitShell({
     >
       <div className="pointer-events-none fixed inset-0 -z-20 wellness-room-base" aria-hidden />
       <div
-        className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-b from-cream/50 via-transparent to-linen/80"
+        className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-b from-cream/40 via-transparent to-linen/80"
         aria-hidden
       />
+      <div className="pointer-events-none fixed inset-0 -z-10 observatory-grid" aria-hidden />
       <div className="pointer-events-none fixed inset-0 -z-10 leaf-light-overlay" aria-hidden />
 
-      {header}
+      <div className="relative z-10 mx-auto flex w-full max-w-[1520px] flex-1 flex-col px-4 sm:px-6 lg:px-8">
+        {header}
 
-      <main className="relative z-10 mx-auto w-full max-w-[1600px] flex-1 px-4 pb-8 pt-4 lg:px-6 lg:pt-8 xl:px-10">
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[19rem_minmax(0,1fr)_22rem] lg:gap-6">
-          <div className="order-2 flex flex-col gap-4 lg:order-1">{left}</div>
-          <div className="order-1 flex min-w-0 flex-col items-center gap-5 lg:order-2">
-            {center}
+        <main className="flex-1 pb-8 pt-4 lg:pt-6">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,18.5rem)_minmax(0,1fr)_minmax(0,18.5rem)] lg:items-start lg:gap-6 xl:gap-8">
+            <div className="order-2 flex flex-col lg:order-1 lg:min-w-0">{left}</div>
+            <div className="order-1 flex min-w-0 flex-col items-center gap-5 lg:order-2">{center}</div>
+            <div className="order-3 flex flex-col lg:min-w-0">{right}</div>
           </div>
-          <div className="order-3 flex flex-col gap-4 lg:order-3">{right}</div>
-        </div>
 
-        {bottom ? (
-          <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">{bottom}</div>
-        ) : null}
-      </main>
+          {bottom ? (
+            <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
+              {bottom}
+            </div>
+          ) : null}
+        </main>
 
-      {footer ? (
-        <footer className="relative z-10 shrink-0 px-4 pb-6 pt-2 text-center">{footer}</footer>
-      ) : null}
+        {footer ? <footer className="shrink-0 pb-6 pt-2 text-center">{footer}</footer> : null}
+      </div>
     </div>
   );
 }

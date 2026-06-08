@@ -11,6 +11,7 @@ import type { CoachMap, SafetyLevel } from "../types";
 
 type CoachCanvasProps = {
   coachMap: CoachMap | null;
+  bare?: boolean;
 };
 
 const SAFETY_LABEL: Record<SafetyLevel, string> = {
@@ -25,9 +26,9 @@ const SAFETY_CLASS: Record<SafetyLevel, string> = {
   crisis: "bg-rose-100/80 text-rose-800",
 };
 
-export function CoachCanvas({ coachMap }: CoachCanvasProps) {
+export function CoachCanvas({ coachMap, bare }: CoachCanvasProps) {
   return (
-    <section className="glass-panel w-full px-4 py-4">
+    <section className={bare ? "w-full" : "glass-panel w-full px-4 py-4"}>
       <header className="mb-3">
         <h2 className="flex items-center gap-2 font-serif text-lg text-earth">
           <Network className="h-4 w-4 text-sageDeep" />

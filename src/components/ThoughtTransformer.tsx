@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import { Check, Copy, Loader2, Sparkles, Wand2 } from "lucide-react";
 import { transformThought } from "../api";
 import type { ThoughtTransform } from "../types";
@@ -35,6 +36,7 @@ export function ThoughtTransformer({ initialText = "" }: ThoughtTransformerProps
       const { transform, mockMode: mock } = await transformThought(trimmed);
       setResult(transform);
       setMockMode(mock);
+      if (mock) toast("Mock fallback active", { description: "Ollama is offline — showing safe demo output." });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not transform the thought.");
     } finally {
@@ -46,6 +48,7 @@ export function ThoughtTransformer({ initialText = "" }: ThoughtTransformerProps
     try {
       await navigator.clipboard.writeText(value);
       setCopiedKey(key);
+      toast.success("Thought copied", { description: `Copied the "${key}" version to your clipboard.` });
       window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
     } catch {
       // Clipboard may be blocked; ignore silently.
@@ -53,7 +56,7 @@ export function ThoughtTransformer({ initialText = "" }: ThoughtTransformerProps
   };
 
   return (
-    <section className="glass-panel w-full px-4 py-4">
+    <section className="glass-panel flex h-full w-full flex-col px-4 py-4">
       <header className="mb-3">
         <h2 className="flex items-center gap-2 font-serif text-lg text-earth">
           <Wand2 className="h-4 w-4 text-sageDeep" />

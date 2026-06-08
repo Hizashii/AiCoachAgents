@@ -4,9 +4,10 @@ import type { ActionStep } from "../types";
 
 type ActionPlanPanelProps = {
   plan: ActionStep[];
+  bare?: boolean;
 };
 
-export function ActionPlanPanel({ plan }: ActionPlanPanelProps) {
+export function ActionPlanPanel({ plan, bare }: ActionPlanPanelProps) {
   const [done, setDone] = useState<Record<number, boolean>>({});
 
   // Reset the checkboxes whenever a new plan arrives.
@@ -17,7 +18,7 @@ export function ActionPlanPanel({ plan }: ActionPlanPanelProps) {
   const completed = Object.values(done).filter(Boolean).length;
 
   return (
-    <section className="glass-panel w-full px-4 py-4">
+    <section className={bare ? "w-full" : "glass-panel w-full px-4 py-4"}>
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 font-serif text-lg text-earth">
           <ListChecks className="h-4 w-4 text-sageDeep" />

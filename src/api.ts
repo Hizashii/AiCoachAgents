@@ -9,7 +9,7 @@ export type AgentChatRequest = {
   studyContext?: string;
 };
 
-export async function sendAgentChat(payload: AgentChatRequest): Promise<AgentChatResult> {
+async function sendAgentChat(payload: AgentChatRequest): Promise<AgentChatResult> {
   const response = await fetch(`${API_BASE}/api/agent-chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,7 +48,6 @@ export async function transformThought(
 }
 
 type StreamHandlers = {
-  onStatus?: (message: string) => void;
   onStep?: (step: AgentTraceEntry) => void;
 };
 
@@ -103,7 +102,6 @@ export function sendAgentChatStream(
 
       switch (data.type) {
         case "status":
-          if (data.message) handlers.onStatus?.(data.message);
           break;
         case "agent-step":
           if (data.step) handlers.onStep?.(data.step);

@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-/** Inline wellness avatar (from public/therapist.svg) for CSS-driven mouth / SVG animation. */
+/** Inline wellness avatar for CSS-driven mouth / SVG animation. */
 export function TherapistSvg({
   className,
   style,

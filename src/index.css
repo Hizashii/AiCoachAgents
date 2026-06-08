@@ -128,10 +128,6 @@
     @apply rounded-3xl border border-white/60 bg-white/55 shadow-glass ring-1 ring-white/50 backdrop-blur-xl;
   }
 
-  .glass-panel-tight {
-    @apply rounded-2xl border border-stone/60 bg-white/60 shadow-soft ring-1 ring-white/50 backdrop-blur-md;
-  }
-
   /* A soft accent halo that follows the adaptive safety variables. */
   .accent-glow {
     box-shadow: 0 0 calc(40px * var(--glow-strength, 1))
@@ -141,12 +137,24 @@
 
 @layer utilities {
   .wellness-room-base {
-    background-color: #f0ebe3;
+    background-color: #eee8df;
     background-image:
-      radial-gradient(ellipse 140% 90% at 50% -25%, rgba(191, 210, 188, 0.55), transparent 58%),
-      radial-gradient(ellipse 100% 70% at 110% 20%, rgba(232, 223, 210, 0.85), transparent 52%),
-      radial-gradient(ellipse 85% 55% at -15% 75%, rgba(200, 214, 196, 0.4), transparent 48%),
-      radial-gradient(ellipse 60% 45% at 80% 95%, rgba(217, 207, 194, 0.5), transparent 50%);
+      radial-gradient(ellipse 140% 90% at 50% -25%, rgba(120, 150, 140, 0.28), transparent 58%),
+      radial-gradient(ellipse 100% 70% at 110% 15%, rgba(232, 223, 210, 0.85), transparent 52%),
+      radial-gradient(ellipse 90% 60% at -10% 80%, rgba(180, 201, 178, 0.38), transparent 50%),
+      radial-gradient(ellipse 70% 50% at 50% 105%, rgba(45, 58, 56, 0.12), transparent 55%);
+  }
+
+  /* Faint technical grid — signals an "AI observatory / command center". */
+  .observatory-grid {
+    background-image:
+      linear-gradient(rgba(45, 58, 56, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(45, 58, 56, 0.05) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, black, transparent 85%);
+    -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, black, transparent 85%);
+    animation: grid-drift 24s linear infinite;
+    opacity: calc(0.7 * var(--glow-strength, 1));
   }
 
   /* Soft organic light — suggests leaves / window light without literal clipart */
@@ -159,5 +167,35 @@
       rgba(255, 252, 248, 0.04) 49px
     );
     opacity: 0.85;
+  }
+}
+
+@layer components {
+  /* A darker, more luminous "control surface" panel for the AI Core stage. */
+  .stage-panel {
+    @apply rounded-[2rem] border border-white/50 shadow-natural ring-1 ring-white/40 backdrop-blur-xl;
+    background:
+      radial-gradient(ellipse 90% 70% at 50% 0%, rgba(255, 255, 255, 0.55), transparent 60%),
+      linear-gradient(160deg, rgba(247, 244, 236, 0.78), rgba(232, 223, 210, 0.6));
+  }
+
+  /* Compact segmented control used by the command + intelligence panels. */
+  .segmented {
+    @apply flex w-full min-w-0 items-stretch gap-0.5 overflow-hidden rounded-full border border-stone/60 bg-white/55 p-1 ring-1 ring-white/50;
+  }
+  .segmented-item {
+    @apply inline-flex min-w-0 flex-1 shrink items-center justify-center gap-1 rounded-full px-1.5 py-1.5 text-[0.68rem] font-medium text-bark/70 transition;
+  }
+  .segmented-item[data-active="true"] {
+    @apply bg-sageDeep text-white shadow-soft;
+  }
+  .segmented-item:not([data-active="true"]):hover {
+    @apply bg-white/70 text-earth;
+  }
+
+  /* A small status dot for the agent network nodes. */
+  .agent-dot-running {
+    box-shadow: 0 0 0 0 rgba(var(--accent), 0.55);
+    animation: ring-pulse 1.8s ease-out infinite;
   }
 }

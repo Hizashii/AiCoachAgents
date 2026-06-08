@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { Toaster, toast } from "sonner";
 import {
   BookOpen,
   CalendarHeart,
@@ -7,39 +7,34 @@ import {
   CloudFog,
   Compass,
   Feather,
-  FileText,
   Layers2,
   Leaf,
   LifeBuoy,
   MessageCircle,
-  Presentation,
+  Radio,
   Scale,
   Square,
   SunMedium,
-  Swords,
   Volume2,
   VolumeX,
   Waves,
 } from "lucide-react";
 import { sendAgentChatStream } from "./api";
-import { ActionPlanPanel } from "./components/ActionPlanPanel";
-import { AgentReplayTimeline } from "./components/AgentReplayTimeline";
-import { AgentTracePanel } from "./components/AgentTracePanel";
-import { Avatar } from "./components/Avatar";
+import { AICore } from "./components/AICore";
+import { AgentIntelligencePanel } from "./components/AgentIntelligencePanel";
 import { ChatInput } from "./components/ChatInput";
-import { CoachCanvas } from "./components/CoachCanvas";
 import { CockpitShell } from "./components/CockpitShell";
-import { MoodDashboard } from "./components/MoodDashboard";
-import { PresentationMode } from "./components/PresentationMode";
+import { CommandPanel } from "./components/CommandPanel";
+import { MoodMemoryPanel } from "./components/MoodMemoryPanel";
 import { SafetyPanel } from "./components/SafetyPanel";
-import { SidebarOption } from "./components/SidebarOption";
 import { StatusPill } from "./components/StatusPill";
+import { TechnicalStackCard } from "./components/TechnicalStackCard";
 import { ThoughtTransformer } from "./components/ThoughtTransformer";
 import { Transcript } from "./components/Transcript";
-import { Waveform } from "./components/Waveform";
 import { getMoodLogs, saveMoodLog, type MoodLog } from "./storage";
 import type {
   ActionStep,
+  AgentName,
   AgentTraceEntry,
   AppPresence,
   ChatMessage,
@@ -179,9 +174,7 @@ export default function App() {
   const [actionPlan, setActionPlan] = useState<ActionStep[]>([]);
   const [coachMap, setCoachMap] = useState<CoachMap | null>(null);
   const [studyContext, setStudyContext] = useState("");
-  const [showStudyContext, setShowStudyContext] = useState(false);
   const [debateMode, setDebateMode] = useState(false);
-  const [presentationOpen, setPresentationOpen] = useState(false);
   const [transformSeed, setTransformSeed] = useState("");
   const [moodLogs, setMoodLogs] = useState<MoodLog[]>([]);
   const [voiceReplyOn, setVoiceReplyOn] = useState(true);
@@ -376,7 +369,18 @@ export default function App() {
         { id: createId(), role: "assistant", text: reply },
       ]);
 
-      // Persist this exchange so the mood dashboard can show patterns over time.
+      if (result.mockMode) {
+        toast("Mock mode active", {
+          description: "Ollama is offline — agents are using safe demo fallbacks.",
+        });
+      }
+      if ((result.actionPlan?.length ?? 0) > 0 && result.safetyLevel !== "crisis") {
+        toast.success("Action plan ready", {
+          description: `${result.actionPlan?.length} tiny next steps generated.`,
+        });
+      }
+
+      // Persist this exchange so Mood Memory can show patterns over time.
       saveMoodLog({
         id: createId(),
         createdAt: new Date().toISOString(),
@@ -427,21 +431,30 @@ export default function App() {
   const handleDemo = useCallback(() => {
     if (presence !== "idle") return;
     setSelectedLabel("demo");
+    toast("Demo started", { description: "Running the full multi-agent walkthrough." });
     void processExchange(DEMO_MESSAGE, "demo");
   }, [presence, processExchange]);
 
-  const handleResetDemo = useCallback(() => {
-    stopSpeaking();
-    setMessages([]);
-    setAgentTrace([]);
-    setThinkingTrace([]);
-    setActionPlan([]);
-    setCoachMap(null);
-    setSafetyLevel(null);
-    setMockMode(false);
-    setSelectedLabel(null);
-    setInput("");
-  }, [stopSpeaking]);
+  const handleScenario = useCallback(
+    (message: string, mode: string) => {
+      if (presence !== "idle") return;
+      setSelectedLabel(null);
+      void processExchange(message, mode);
+    },
+    [presence, processExchange],
+  );
+
+  const handleSaveContext = useCallback(() => {
+    if (!studyContext.trim()) return;
+    toast.success("Context updated", {
+      description: "Agents will use this assignment context when advising.",
+    });
+  }, [studyContext]);
+
+  const handleClearContext = useCallback(() => {
+    setStudyContext("");
+    toast("Context cleared");
+  }, []);
 
   const handleRunTransform = useCallback((text: string) => {
     // Seed the Thought Transformer panel (it remounts on a new seed) and bring
@@ -455,11 +468,14 @@ export default function App() {
   }, []);
 
   const busy = presence !== "idle";
+  const working = presence === "listening";
   const statusText = statusForPresence(presence);
   const safety: SafetyLevel = safetyLevel ?? "normal";
+  const presenceLabel = presence === "speaking" ? "Speaking" : working ? "Thinking" : "Idle";
+  const activeAgents: AgentName[] = (working ? thinkingTrace : agentTrace).map((e) => e.agent);
 
   const header = (
-    <header className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-8">
+    <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 py-4">
       <div className="flex items-center gap-3">
         <span className="accent-glow flex h-10 w-10 items-center justify-center rounded-full bg-cream/90 text-sageDeep shadow-soft ring-2 ring-white/90">
           <Leaf className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.75} />
@@ -468,226 +484,61 @@ export default function App() {
           <h1 className="font-serif text-xl font-semibold leading-none tracking-wide text-earth sm:text-2xl">
             Ethereal Wellness
           </h1>
-          <p className="text-[0.7rem] text-bark/55">AI agentic coaching cockpit</p>
+          <p className="text-[0.7rem] text-bark/55">Agentic AI student coach</p>
         </div>
       </div>
-      <div className="flex items-center gap-2 sm:gap-3">
-        <StatusPill safetyLevel={safetyLevel} mockMode={mockMode} />
-        <span className="hidden text-sm text-bark/70 md:inline">{statusText}</span>
-        <button
-          type="button"
-          onClick={() => setPresentationOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-full bg-sageMuted px-3.5 py-2 text-xs font-medium text-white shadow-soft transition hover:bg-moss"
+      <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-2.5">
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border border-sageDeep/30 bg-white/70 px-3 py-1 text-[0.7rem] font-medium text-sageDeep"
+          aria-label={`AI state: ${presenceLabel}`}
         >
-          <Presentation className="h-4 w-4" />
-          Presentation Mode
-        </button>
+          <Radio className={`h-3.5 w-3.5 ${presence !== "idle" ? "animate-pulse" : ""}`} />
+          {presenceLabel}
+        </span>
+        <StatusPill safetyLevel={safetyLevel} mockMode={mockMode} />
       </div>
     </header>
   );
 
   const left = (
-    <>
-      <section className="glass-panel px-4 py-4">
-        <h2 className="mb-3 font-serif text-lg text-earth">Controls</h2>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={handleDemo}
-            disabled={busy}
-            title="Run classroom demo scenario"
-            className="rounded-full border border-stone/60 bg-white/70 px-3 py-1.5 text-xs font-medium text-bark transition hover:bg-white disabled:opacity-40"
-          >
-            Run demo
-          </button>
-          <button
-            type="button"
-            onClick={() => setDebateMode((v) => !v)}
-            disabled={busy}
-            aria-pressed={debateMode}
-            title="Two agents debate, a judge decides"
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition disabled:opacity-40 ${
-              debateMode
-                ? "border-sageDeep/50 bg-sage/25 text-sageDeep"
-                : "border-stone/60 bg-white/70 text-bark hover:bg-white"
-            }`}
-          >
-            <Swords className="h-3.5 w-3.5" />
-            Debate {debateMode ? "on" : "off"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowStudyContext((v) => !v)}
-            aria-pressed={showStudyContext}
-            title="Add assignment or project context for the AI"
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-              studyContext.trim()
-                ? "border-sageDeep/50 bg-sage/25 text-sageDeep"
-                : "border-stone/60 bg-white/70 text-bark hover:bg-white"
-            }`}
-          >
-            <FileText className="h-3.5 w-3.5" />
-            Context
-          </button>
-        </div>
-
-        {showStudyContext ? (
-          <div className="mt-3">
-            <label
-              htmlFor="study-context"
-              className="mb-1 block text-[0.68rem] uppercase tracking-wide text-bark/65"
-            >
-              Assignment / project context (RAG-lite)
-            </label>
-            <textarea
-              id="study-context"
-              value={studyContext}
-              onChange={(e) => setStudyContext(e.target.value)}
-              placeholder="Paste your assignment brief or project context here. The AI will use it when giving advice..."
-              rows={4}
-              className="w-full rounded-2xl border border-stone/70 bg-white/70 p-3 text-sm text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
-            />
-          </div>
-        ) : null}
-      </section>
-
-      <section className="glass-panel px-4 py-4">
-        <h2 className="mb-3 font-serif text-lg text-earth">How do you feel?</h2>
-        <div className="flex flex-col gap-2">
-          {MOOD_OPTIONS.map(({ label, icon: Icon }) => (
-            <SidebarOption
-              key={label}
-              label={label}
-              side="left"
-              disabled={busy}
-              selected={selectedLabel === label}
-              icon={<Icon className="h-5 w-5" strokeWidth={1.65} />}
-              onClick={() => handlePreset(label)}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="glass-panel px-4 py-4">
-        <h2 className="mb-3 font-serif text-lg text-earth">What do you need?</h2>
-        <div className="flex flex-col gap-2">
-          {ACTION_OPTIONS.map(({ label, icon: Icon }) => (
-            <SidebarOption
-              key={label}
-              label={label}
-              side="right"
-              disabled={busy}
-              selected={selectedLabel === label}
-              icon={<Icon className="h-5 w-5" strokeWidth={1.65} />}
-              onClick={() => handlePreset(label)}
-            />
-          ))}
-        </div>
-      </section>
-    </>
+    <CommandPanel
+      moodOptions={MOOD_OPTIONS}
+      actionOptions={ACTION_OPTIONS}
+      selectedLabel={selectedLabel}
+      busy={busy}
+      onPreset={handlePreset}
+      onDemo={handleDemo}
+      onScenario={handleScenario}
+      onTransform={handleRunTransform}
+      debateMode={debateMode}
+      onToggleDebate={() => setDebateMode((v) => !v)}
+      studyContext={studyContext}
+      onChangeContext={setStudyContext}
+      onSaveContext={handleSaveContext}
+      onClearContext={handleClearContext}
+    />
   );
 
   const center = (
     <>
-      <div className="relative w-[min(100%,320px)] max-w-[min(94vw,360px)]">
-        <div
-          className="pointer-events-none absolute -inset-4 rounded-full bg-leaf-shade opacity-90 blur-2xl"
-          aria-hidden
+      <div className="stage-panel flex w-full max-w-xl flex-col items-center gap-2 px-5 py-6 sm:px-8 sm:py-7 lg:max-w-2xl">
+        <AICore
+          presence={presence}
+          working={working}
+          activeAgents={activeAgents}
+          statusText={statusText}
         />
-        <div
-          className="pointer-events-none absolute -inset-1 rounded-full bg-gradient-to-br from-white/55 via-cream/25 to-transparent shadow-[inset_0_0_40px_rgba(255,255,255,0.35)] ring-1 ring-white/70 backdrop-blur-[2px]"
-          aria-hidden
-        />
-
-        <motion.div
-          className="accent-glow relative rounded-full bg-gradient-to-br from-white/95 via-cream/90 to-mist/75 p-[3px] shadow-natural ring-1 ring-stone/40"
-          animate={{
-            scale: presence === "speaking" ? [1, 1.025, 1] : 1,
-            boxShadow:
-              presence === "speaking"
-                ? "0 20px 50px -12px rgba(85, 107, 84, 0.35), 0 0 0 1px rgba(255,255,255,0.5)"
-                : "0 18px 44px -16px rgba(61, 53, 46, 0.2), 0 0 0 1px rgba(255,255,255,0.45)",
-          }}
-          transition={{
-            duration: presence === "speaking" ? 1.85 : 0.45,
-            repeat: presence === "speaking" ? Infinity : 0,
-            ease: "easeInOut",
-          }}
-        >
-          <div className="rounded-full bg-gradient-to-b from-white/80 via-cream/50 to-linen/60 p-1.5 shadow-glass ring-1 ring-white/90">
-            <div className="relative aspect-square overflow-hidden rounded-full bg-gradient-to-b from-cream via-linen to-sand shadow-[inset_0_2px_24px_rgba(61,53,46,0.06)]">
-              <Avatar presence={presence} className="h-full w-full min-h-[200px]" />
-            </div>
-          </div>
-        </motion.div>
       </div>
 
-      <div className="min-h-[2.5rem] text-center">
-        <AnimatePresence mode="wait">
-          <motion.p
-            key={presence}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.35, ease: "easeOut" }}
-            className="font-serif text-xl text-earth sm:text-2xl"
-          >
-            {statusText}
-          </motion.p>
-        </AnimatePresence>
-      </div>
-
-      <Waveform presence={presence} />
-
-      {safety === "crisis" ? <SafetyPanel /> : null}
+      {safety === "crisis" ? (
+        <div className="flex justify-center">
+          <SafetyPanel />
+        </div>
+      ) : null}
 
       <Transcript messages={messages} />
 
-      <div className="flex w-full max-w-xl flex-wrap items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => setVoiceReplyOn((v) => !v)}
-          className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white"
-        >
-          {voiceReplyOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-          Voice reply {voiceReplyOn ? "on" : "off"}
-        </button>
-        <button
-          type="button"
-          onClick={stopSpeaking}
-          className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white disabled:opacity-50"
-          disabled={!isSpeakingOut}
-        >
-          <Square className="h-3.5 w-3.5" />
-          Stop speaking
-        </button>
-        <select
-          value={selectedVoiceName}
-          onChange={(e) => setSelectedVoiceName(e.target.value)}
-          aria-label="Voice style"
-          className="min-w-0 flex-1 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
-        >
-          {availableVoices.length === 0 ? (
-            <option value="">Default browser voice</option>
-          ) : (
-            availableVoices
-              .filter((v) => /^en[-_]/i.test(v.lang))
-              .map((voice) => (
-                <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
-                  {voice.name} ({voice.lang})
-                </option>
-              ))
-          )}
-        </select>
-      </div>
-      {voiceError ? <p className="w-full max-w-xl text-xs text-rose-700">{voiceError}</p> : null}
-      {!canUseSpeechRecognition ? (
-        <p className="w-full max-w-xl text-xs text-bark/70">
-          Voice input is not supported in this browser. Please type instead.
-        </p>
-      ) : null}
-
-      <div className="w-full max-w-xl">
+      <div className="mx-auto w-full max-w-xl space-y-2">
         <ChatInput
           value={input}
           onChange={setInput}
@@ -696,22 +547,64 @@ export default function App() {
           isListening={isListening}
           disabled={busy}
         />
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setVoiceReplyOn((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white"
+          >
+            {voiceReplyOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+            Voice reply {voiceReplyOn ? "on" : "off"}
+          </button>
+          <button
+            type="button"
+            onClick={stopSpeaking}
+            className="inline-flex items-center gap-2 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark transition hover:bg-white disabled:opacity-50"
+            disabled={!isSpeakingOut}
+          >
+            <Square className="h-3.5 w-3.5" />
+            Stop speaking
+          </button>
+          <select
+            value={selectedVoiceName}
+            onChange={(e) => setSelectedVoiceName(e.target.value)}
+            aria-label="Voice style"
+            className="min-w-0 flex-1 rounded-full border border-stone/70 bg-white/70 px-3 py-1.5 text-xs text-bark outline-none transition focus:ring-2 focus:ring-sage/35"
+          >
+            {availableVoices.length === 0 ? (
+              <option value="">Default browser voice</option>
+            ) : (
+              availableVoices
+                .filter((v) => /^en[-_]/i.test(v.lang))
+                .map((voice) => (
+                  <option key={`${voice.name}-${voice.lang}`} value={voice.name}>
+                    {voice.name} ({voice.lang})
+                  </option>
+                ))
+            )}
+          </select>
+        </div>
+        {voiceError ? <p className="text-xs text-rose-700">{voiceError}</p> : null}
+        {!canUseSpeechRecognition ? (
+          <p className="text-xs text-bark/70">
+            Voice input is not supported in this browser. Please type instead.
+          </p>
+        ) : null}
       </div>
     </>
   );
 
   const right = (
-    <>
-      <AgentTracePanel
-        trace={agentTrace}
-        thinkingTrace={thinkingTrace}
-        isThinking={presence === "listening"}
-        safetyLevel={safetyLevel}
-      />
-      <AgentReplayTimeline trace={agentTrace} />
-      <CoachCanvas coachMap={coachMap} />
-      <ActionPlanPanel plan={actionPlan} />
-    </>
+    <AgentIntelligencePanel
+      trace={agentTrace}
+      thinkingTrace={thinkingTrace}
+      isThinking={working}
+      debateMode={debateMode}
+      safetyLevel={safetyLevel}
+      actionPlan={actionPlan}
+      coachMap={coachMap}
+    />
   );
 
   const bottom = (
@@ -719,7 +612,8 @@ export default function App() {
       <div id="thought-transformer">
         <ThoughtTransformer key={transformSeed} initialText={transformSeed} />
       </div>
-      <MoodDashboard logs={moodLogs} onCleared={() => setMoodLogs(getMoodLogs())} />
+      <MoodMemoryPanel logs={moodLogs} onCleared={() => setMoodLogs(getMoodLogs())} />
+      <TechnicalStackCard />
     </>
   );
 
@@ -740,15 +634,15 @@ export default function App() {
         bottom={bottom}
         footer={footer}
       />
-      <PresentationMode
-        open={presentationOpen}
-        onClose={() => setPresentationOpen(false)}
-        onRunScenario={(message, mode) => {
-          setSelectedLabel(null);
-          void processExchange(message, mode ?? "general");
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: "rgba(247,244,236,0.96)",
+            border: "1px solid rgba(217,207,194,0.7)",
+            color: "#3d352e",
+          },
         }}
-        onRunTransform={handleRunTransform}
-        onResetDemo={handleResetDemo}
       />
     </>
   );

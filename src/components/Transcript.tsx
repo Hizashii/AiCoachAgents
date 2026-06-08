@@ -10,7 +10,7 @@ export function Transcript({ messages }: TranscriptProps) {
   const recent = messages.slice(-14);
 
   return (
-    <div className="w-full max-w-xl rounded-3xl border border-stone/90 bg-cream/85 px-4 py-4 shadow-lift ring-1 ring-white/60 backdrop-blur-md sm:px-5 sm:py-4">
+    <div className="mx-auto w-full max-w-xl rounded-3xl border border-stone/90 bg-cream/85 px-4 py-4 shadow-lift ring-1 ring-white/60 backdrop-blur-md sm:px-5 sm:py-4">
       <div className="mb-3 flex items-center justify-between gap-2 border-b border-stone/60 pb-3">
         <p className="font-serif text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-sageDeep">
           Conversation

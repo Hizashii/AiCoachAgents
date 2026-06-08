@@ -5,6 +5,7 @@ import type { AgentTraceEntry } from "../types";
 
 type AgentReplayTimelineProps = {
   trace: AgentTraceEntry[];
+  bare?: boolean;
 };
 
 // The createTraceEntry output is "Role: ...\nStatus: ...\n\n<body>".
@@ -23,7 +24,7 @@ function statusClass(status: string): string {
   return "bg-fern/50 text-moss";
 }
 
-export function AgentReplayTimeline({ trace }: AgentReplayTimelineProps) {
+export function AgentReplayTimeline({ trace, bare }: AgentReplayTimelineProps) {
   const [revealed, setRevealed] = useState(0);
   const [replaying, setReplaying] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -63,7 +64,7 @@ export function AgentReplayTimeline({ trace }: AgentReplayTimelineProps) {
   const visible = trace.slice(0, replaying ? revealed : trace.length);
 
   return (
-    <section className="glass-panel w-full px-4 py-4">
+    <section className={bare ? "w-full" : "glass-panel w-full px-4 py-4"}>
       <header className="mb-3 flex items-center justify-between gap-2">
         <div>
           <h2 className="flex items-center gap-2 font-serif text-lg text-earth">

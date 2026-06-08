@@ -28,7 +28,6 @@ export type ActionStep = {
   title: string;
   minutes: number;
   reason: string;
-  completed?: boolean;
 };
 
 // Structured map of how the AI understood the situation, used by Coach Canvas.

@@ -18,6 +18,13 @@ export default {
         fern: "#b8c9b2",
         dawn: "#e5ddd0",
         sageDeep: "#5d6f5c",
+        // Observatory accents — deeper contrast for the AI command center.
+        slate: "#2d3a38",
+        ink: "#202826",
+        teal: "#4f857f",
+        tealSoft: "#7fb0a8",
+        gold: "#b89255",
+        goldSoft: "#d8c08a",
       },
       fontFamily: {
         serif: ['"Cormorant Garamond"', "Georgia", "serif"],
@@ -34,6 +41,30 @@ export default {
       backgroundImage: {
         "leaf-shade":
           "radial-gradient(ellipse 120% 80% at 50% 0%, rgba(184, 201, 178, 0.45) 0%, transparent 55%), radial-gradient(ellipse 90% 60% at 100% 30%, rgba(235, 227, 214, 0.7) 0%, transparent 50%), radial-gradient(ellipse 70% 50% at 0% 70%, rgba(200, 214, 196, 0.35) 0%, transparent 45%)",
+      },
+      keyframes: {
+        "core-breathe": {
+          "0%, 100%": { transform: "scale(1)", opacity: "0.85" },
+          "50%": { transform: "scale(1.06)", opacity: "1" },
+        },
+        "ring-pulse": {
+          "0%": { transform: "scale(0.85)", opacity: "0.55" },
+          "100%": { transform: "scale(1.5)", opacity: "0" },
+        },
+        "grid-drift": {
+          "0%": { backgroundPosition: "0 0" },
+          "100%": { backgroundPosition: "46px 46px" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-6px)" },
+        },
+      },
+      animation: {
+        "core-breathe": "core-breathe 6s ease-in-out infinite",
+        "ring-pulse": "ring-pulse 2.6s ease-out infinite",
+        "grid-drift": "grid-drift 24s linear infinite",
+        float: "float 7s ease-in-out infinite",
       },
     },
   },
