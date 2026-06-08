@@ -1,0 +1,11 @@
+# Free deploy on Render (mock mode — no Ollama on free tier).
+# Connect your GitHub repo at https://render.com → New → Blueprint
+services:
+  - type: web
+    name: ethereal-wellness
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production

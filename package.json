@@ -8,6 +8,7 @@
     "server": "tsx watch server/src/index.ts",
     "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
     "build": "tsc --noEmit && vite build",
+    "start": "tsx server/src/index.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sonner": "^2.0.7",
+    "tsx": "^4.20.6",
     "ws": "^8.21.0"
   },
   "devDependencies": {
@@ -32,7 +34,6 @@
     "concurrently": "^9.2.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
-    "tsx": "^4.20.6",
     "typescript": "~5.6.3",
     "vite": "^5.4.11"
   }

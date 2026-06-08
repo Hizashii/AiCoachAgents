@@ -1,6 +1,17 @@
 import type { AgentChatResult, AgentTraceEntry, ThoughtTransform } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8787";
+function apiBase(): string {
+  const fromEnv = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  // Dev: Vite (5173) talks to Express (8787). Prod: same server, relative URLs.
+  if (import.meta.env.DEV) return "http://localhost:8787";
+  return "";
+}
+
+function apiUrl(path: string): string {
+  const base = apiBase();
+  return base ? `${base}${path}` : path;
+}
 
 export type AgentChatRequest = {
   message: string;
@@ -10,7 +21,7 @@ export type AgentChatRequest = {
 };
 
 async function sendAgentChat(payload: AgentChatRequest): Promise<AgentChatResult> {
-  const response = await fetch(`${API_BASE}/api/agent-chat`, {
+  const response = await fetch(apiUrl("/api/agent-chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -30,7 +41,7 @@ async function sendAgentChat(payload: AgentChatRequest): Promise<AgentChatResult
 export async function transformThought(
   message: string,
 ): Promise<{ transform: ThoughtTransform; mockMode: boolean }> {
-  const response = await fetch(`${API_BASE}/api/transform-thought`, {
+  const response = await fetch(apiUrl("/api/transform-thought"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
@@ -52,9 +63,12 @@ type StreamHandlers = {
 };
 
 function wsUrl(): string {
-  // Turn the http(s) API base into a ws(s) URL for the streaming endpoint.
-  const base = API_BASE.replace(/^http/i, "ws").replace(/\/$/, "");
-  return `${base}/ws/agent-chat`;
+  const base = apiBase();
+  if (base) {
+    return `${base.replace(/^http/i, "ws")}/ws/agent-chat`;
+  }
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/agent-chat`;
 }
 
 // Streams the agent pipeline over a WebSocket, calling handlers as each agent
